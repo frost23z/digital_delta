@@ -79,8 +79,24 @@ CREATE TABLE sync_checkpoints (
   updated_at INTEGER NOT NULL
 );
 
+CREATE TABLE conflicts (
+  conflict_id TEXT NOT NULL PRIMARY KEY,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  field_name TEXT NOT NULL,
+  local_value TEXT,
+  remote_value TEXT,
+  merge_strategy TEXT NOT NULL,
+  manual_required INTEGER AS Boolean NOT NULL DEFAULT 1,
+  status TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  resolved_at INTEGER,
+  resolution TEXT
+);
+
 CREATE INDEX mutation_logs_sync_idx ON mutation_logs(synced, mutation_timestamp);
 CREATE INDEX sync_checkpoints_updated_idx ON sync_checkpoints(updated_at);
+CREATE INDEX conflicts_status_idx ON conflicts(status, created_at);
 
 selectAllUsers:
 SELECT *
@@ -103,6 +119,10 @@ INSERT OR REPLACE INTO users(
   updated_at
 )
 VALUES (?, ?, ?, ?, ?, ?, ?);
+
+deleteUserById:
+DELETE FROM users
+WHERE user_id = ?;
 
 selectAllDeliveries:
 SELECT *
@@ -129,6 +149,28 @@ INSERT OR REPLACE INTO deliveries(
 )
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
+deleteDeliveryById:
+DELETE FROM deliveries
+WHERE task_id = ?;
+
+updateDeliveryStatus:
+UPDATE deliveries
+SET status = ?,
+    updated_at = ?
+WHERE task_id = ?;
+
+updateDeliveryQuantity:
+UPDATE deliveries
+SET quantity = ?,
+    updated_at = ?
+WHERE task_id = ?;
+
+updateDeliveryAssignee:
+UPDATE deliveries
+SET assigned_driver_id = ?,
+    updated_at = ?
+WHERE task_id = ?;
+
 selectAllRoutes:
 SELECT *
 FROM routes
@@ -150,6 +192,10 @@ INSERT OR REPLACE INTO routes(
   updated_at
 )
 VALUES (?, ?, ?, ?, ?, ?, ?);
+
+deleteRouteById:
+DELETE FROM routes
+WHERE route_id = ?;
 
 CREATE INDEX IF NOT EXISTS receipts_verified_at_idx
 ON receipts(verified_at);
@@ -180,6 +226,10 @@ INSERT OR REPLACE INTO receipts(
   verified_at
 )
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteReceiptById:
+DELETE FROM receipts
+WHERE receipt_id = ?;
 
 CREATE INDEX IF NOT EXISTS audit_events_event_timestamp_idx
 ON audit_events(event_timestamp);
@@ -270,3 +320,38 @@ INSERT OR REPLACE INTO sync_checkpoints(
   updated_at
 )
 VALUES (?, ?, ?, ?);
+
+insertConflict:
+INSERT INTO conflicts(
+  conflict_id,
+  entity_type,
+  entity_id,
+  field_name,
+  local_value,
+  remote_value,
+  merge_strategy,
+  manual_required,
+  status,
+  created_at,
+  resolved_at,
+  resolution
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+selectOpenConflicts:
+SELECT *
+FROM conflicts
+WHERE status = 'OPEN'
+ORDER BY created_at DESC;
+
+selectOpenConflictCount:
+SELECT COUNT(*)
+FROM conflicts
+WHERE status = 'OPEN';
+
+resolveConflict:
+UPDATE conflicts
+SET status = 'RESOLVED',
+    resolved_at = ?,
+    resolution = ?
+WHERE conflict_id = ?;
