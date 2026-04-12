@@ -4,7 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import me.zayedbinhasan.android_app.ui.DigitalDeltaApp
+import me.zayedbinhasan.android_app.ui.core.DigitalDeltaApp
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
