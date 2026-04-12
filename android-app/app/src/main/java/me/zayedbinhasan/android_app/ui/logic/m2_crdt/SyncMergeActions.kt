@@ -25,7 +25,6 @@ internal fun simulateSyncWithPeer(
         lastSyncTimestamp = latestMutationTimestamp,
         updatedAt = now,
     )
-    appendMutation(repository, entityType = "sync_checkpoint", entityId = peerId, operationType = "UPSERT")
 }
 
 internal fun applyIncomingMutationBatch(repository: LocalRepository) {

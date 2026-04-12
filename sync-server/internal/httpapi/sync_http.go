@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	digitaldeltav1 "github.com/frost23z/digital_delta/sync-server/internal/gen/proto"
@@ -53,6 +54,8 @@ func RegisterRoutes(mux *http.ServeMux, syncHandler *handlers.SyncHandler) {
 	})
 
 	mux.HandleFunc("/api/sync/register", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[sync-http] %s %s remote=%s", r.Method, r.URL.Path, r.RemoteAddr)
+
 		if r.Method != http.MethodPost {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]any{
 				"ok":      false,
@@ -71,6 +74,7 @@ func RegisterRoutes(mux *http.ServeMux, syncHandler *handlers.SyncHandler) {
 
 		var req registerNodeRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			log.Printf("[sync-http] register decode failed remote=%s err=%v", r.RemoteAddr, err)
 			writeJSON(w, http.StatusBadRequest, map[string]any{
 				"ok":      false,
 				"message": "invalid json body",
@@ -78,12 +82,15 @@ func RegisterRoutes(mux *http.ServeMux, syncHandler *handlers.SyncHandler) {
 			return
 		}
 
+		log.Printf("[sync-http] register request node_id=%s role=%s", req.NodeID, req.Role)
+
 		resp, err := syncHandler.RegisterNode(r.Context(), &digitaldeltav1.RegisterNodeRequest{
 			NodeId:    req.NodeID,
 			PublicKey: req.PublicKey,
 			Role:      req.Role,
 		})
 		if err != nil {
+			log.Printf("[sync-http] register failed node_id=%s err=%v", req.NodeID, err)
 			writeJSON(w, http.StatusBadRequest, map[string]any{
 				"ok":      false,
 				"message": err.Error(),
@@ -91,10 +98,14 @@ func RegisterRoutes(mux *http.ServeMux, syncHandler *handlers.SyncHandler) {
 			return
 		}
 
+		log.Printf("[sync-http] register ok node_id=%s", req.NodeID)
+
 		writeJSON(w, http.StatusOK, resp)
 	})
 
 	mux.HandleFunc("/api/sync/delta", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[sync-http] %s %s remote=%s", r.Method, r.URL.Path, r.RemoteAddr)
+
 		if r.Method != http.MethodPost {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]any{
 				"ok":      false,
@@ -113,12 +124,15 @@ func RegisterRoutes(mux *http.ServeMux, syncHandler *handlers.SyncHandler) {
 
 		var req deltaSyncRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			log.Printf("[sync-http] delta decode failed remote=%s err=%v", r.RemoteAddr, err)
 			writeJSON(w, http.StatusBadRequest, map[string]any{
 				"ok":      false,
 				"message": "invalid json body",
 			})
 			return
 		}
+
+		log.Printf("[sync-http] delta request node_id=%s outgoing=%d", req.NodeID, len(req.OutgoingMutations))
 
 		protoReq := &digitaldeltav1.DeltaSyncRequest{
 			NodeId: req.NodeID,
@@ -165,6 +179,7 @@ func RegisterRoutes(mux *http.ServeMux, syncHandler *handlers.SyncHandler) {
 
 		protoResp, err := syncHandler.DeltaSync(r.Context(), protoReq)
 		if err != nil {
+			log.Printf("[sync-http] delta failed node_id=%s err=%v", req.NodeID, err)
 			writeJSON(w, http.StatusBadRequest, map[string]any{
 				"ok":      false,
 				"message": err.Error(),
@@ -199,6 +214,13 @@ func RegisterRoutes(mux *http.ServeMux, syncHandler *handlers.SyncHandler) {
 			HasConflicts:      protoResp.GetHasConflicts(),
 			ConflictEntityIDs: protoResp.GetConflictEntityIds(),
 		})
+
+		log.Printf(
+			"[sync-http] delta ok node_id=%s synced=%d incoming=%d",
+			req.NodeID,
+			len(syncedIDs),
+			len(protoResp.GetIncomingMutations()),
+		)
 	})
 }
 

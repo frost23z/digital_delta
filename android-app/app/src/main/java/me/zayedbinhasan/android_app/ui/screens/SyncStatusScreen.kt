@@ -1,17 +1,21 @@
 package me.zayedbinhasan.android_app.ui.screens
 
+import android.os.Build
+import android.util.Log
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -24,17 +28,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import me.zayedbinhasan.android_app.data.local.repository.LocalRepository
 import me.zayedbinhasan.android_app.ui.core.DEFAULT_LOCAL_NODE_ID
+import me.zayedbinhasan.android_app.ui.core.DEFAULT_SYNC_GRPC_HOST
+import me.zayedbinhasan.android_app.ui.core.DEFAULT_SYNC_GRPC_PORT
+import me.zayedbinhasan.android_app.data.local.repository.LocalRepository
 import me.zayedbinhasan.android_app.ui.core.DEFAULT_SYNC_HTTP_BASE_URL
 import me.zayedbinhasan.android_app.ui.core.DEFAULT_SYNC_PEER_ID
-import me.zayedbinhasan.android_app.ui.logic.core.appendMutation
 import me.zayedbinhasan.android_app.ui.logic.m2_crdt.applyIncomingMutationBatch
 import me.zayedbinhasan.android_app.ui.logic.m2_crdt.applyIncomingMutations
 import me.zayedbinhasan.android_app.ui.logic.m2_crdt.simulateSyncWithPeer
 import me.zayedbinhasan.android_app.ui.logic.m3_mesh.PeerTransferStatus
 import me.zayedbinhasan.android_app.ui.logic.m3_mesh.performPeerDeltaSyncLan
 import me.zayedbinhasan.android_app.ui.logic.m3_mesh.performServerDeltaSync
+import me.zayedbinhasan.android_app.ui.logic.m3_mesh.performServerDeltaSyncHttpFallback
 import me.zayedbinhasan.android_app.ui.logic.m3_mesh.receivePeerDeltaSyncOnce
 import me.zayedbinhasan.android_app.ui.models.MutationUi
 import me.zayedbinhasan.android_app.ui.models.SyncCheckpointUi
@@ -42,12 +48,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+private const val SYNC_UI_LOG_TAG = "DigitalDeltaSyncUI"
+private const val DEFAULT_WIFI_HOST = "192.168.68.131"
+private const val DEFAULT_WIFI_SYNC_HTTP_BASE_URL = "http://$DEFAULT_WIFI_HOST:8081"
+
 @Composable
 internal fun SyncStatusScreen(repository: LocalRepository) {
     val peerId = DEFAULT_SYNC_PEER_ID
-    val syncServerBaseUrl = DEFAULT_SYNC_HTTP_BASE_URL
     val localNodeId = DEFAULT_LOCAL_NODE_ID
     val coroutineScope = rememberCoroutineScope()
+    val runningOnEmulator = remember { isLikelyEmulator() }
 
     var syncInProgress by rememberSaveable { mutableStateOf(false) }
     var syncMessage by rememberSaveable { mutableStateOf("Idle") }
@@ -58,6 +68,14 @@ internal fun SyncStatusScreen(repository: LocalRepository) {
     var peerPortInput by rememberSaveable { mutableStateOf("9099") }
     var listenPortInput by rememberSaveable { mutableStateOf("9099") }
     var peerTransferStatuses by remember { mutableStateOf(emptyList<PeerTransferStatus>()) }
+    var useHttpDevFallback by rememberSaveable { mutableStateOf(false) }
+    var syncGrpcHostInput by rememberSaveable {
+        mutableStateOf(if (runningOnEmulator) DEFAULT_SYNC_GRPC_HOST else DEFAULT_WIFI_HOST)
+    }
+    var syncGrpcPortInput by rememberSaveable { mutableStateOf(DEFAULT_SYNC_GRPC_PORT.toString()) }
+    var syncServerBaseUrlInput by rememberSaveable {
+        mutableStateOf(if (runningOnEmulator) DEFAULT_SYNC_HTTP_BASE_URL else DEFAULT_WIFI_SYNC_HTTP_BASE_URL)
+    }
 
     val pendingMutationsRaw by remember(repository) {
         repository.observePendingMutations()
@@ -111,7 +129,8 @@ internal fun SyncStatusScreen(repository: LocalRepository) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(20.dp),
+            .padding(20.dp)
+            .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("Sync Status", fontWeight = FontWeight.Bold)
@@ -121,6 +140,52 @@ internal fun SyncStatusScreen(repository: LocalRepository) {
                 Text("Latest Mutation: ${latestMutationTimestamp ?: "None"}")
                 Text("Unseen For $peerId: ${unseenForPeer.size}")
                 Text("Connection: Ready when peer/server is reachable")
+                OutlinedTextField(
+                    value = syncGrpcHostInput,
+                    onValueChange = { syncGrpcHostInput = it },
+                    label = { Text("Server gRPC Host") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = syncGrpcPortInput,
+                    onValueChange = { syncGrpcPortInput = it },
+                    label = { Text("Server gRPC Port") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = syncServerBaseUrlInput,
+                    onValueChange = { syncServerBaseUrlInput = it },
+                    label = { Text("HTTP Fallback Base URL") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                Text(
+                    if (runningOnEmulator) {
+                        "Detected emulator: use 10.0.2.2 to reach host machine."
+                    } else {
+                        "Detected physical device: do not use 10.0.2.2. Use host LAN IP or adb reverse with 127.0.0.1."
+                    },
+                )
+                Text(
+                    "Transport Compliance: ${if (useHttpDevFallback) "NON_COMPLIANT (HTTP JSON DEV FALLBACK)" else "COMPLIANT (gRPC + Protobuf)"}",
+                    fontWeight = FontWeight.Bold,
+                )
+                if (useHttpDevFallback) {
+                    Text("Warning: DEV fallback is active and does not satisfy C1 requirements.")
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("Use DEV HTTP fallback")
+                    Switch(
+                        checked = useHttpDevFallback,
+                        onCheckedChange = { useHttpDevFallback = it },
+                        enabled = !syncInProgress,
+                    )
+                }
                 Text("Sync State: $syncMessage")
                 Text("Last Server Sync: ${lastServerSyncAt ?: "Never"}")
                 Button(
@@ -129,21 +194,78 @@ internal fun SyncStatusScreen(repository: LocalRepository) {
                             return@Button
                         }
 
+                        val grpcPort = syncGrpcPortInput.toIntOrNull()
+                        val grpcHost = syncGrpcHostInput.trim()
+                        val httpBaseUrl = syncServerBaseUrlInput.trim()
+
+                        if (!useHttpDevFallback && (grpcHost.isBlank() || grpcPort == null)) {
+                            syncMessage = "SYNC_CONFIG_INVALID_GRPC"
+                            Log.w(
+                                SYNC_UI_LOG_TAG,
+                                "Sync config invalid (gRPC): host='$grpcHost' port='${syncGrpcPortInput.trim()}'",
+                            )
+                            return@Button
+                        }
+                        if (!runningOnEmulator && !useHttpDevFallback && grpcHost == "10.0.2.2") {
+                            syncMessage = "SYNC_CONFIG_INVALID_GRPC_HOST_PHYSICAL_DEVICE"
+                            Log.w(
+                                SYNC_UI_LOG_TAG,
+                                "gRPC host 10.0.2.2 is emulator-only. Physical device must use host LAN IP or adb reverse + 127.0.0.1",
+                            )
+                            return@Button
+                        }
+                        if (useHttpDevFallback && httpBaseUrl.isBlank()) {
+                            syncMessage = "SYNC_CONFIG_INVALID_HTTP"
+                            Log.w(
+                                SYNC_UI_LOG_TAG,
+                                "Sync config invalid (HTTP fallback): baseUrl is blank",
+                            )
+                            return@Button
+                        }
+                        if (!runningOnEmulator && useHttpDevFallback && httpBaseUrl.contains("10.0.2.2")) {
+                            syncMessage = "SYNC_CONFIG_INVALID_HTTP_HOST_PHYSICAL_DEVICE"
+                            Log.w(
+                                SYNC_UI_LOG_TAG,
+                                "HTTP baseUrl 10.0.2.2 is emulator-only. Physical device must use host LAN IP or adb reverse + 127.0.0.1",
+                            )
+                            return@Button
+                        }
+
                         syncInProgress = true
                         syncMessage = "SYNCING"
 
                         coroutineScope.launch {
-                            val serverResult = withContext(Dispatchers.IO) {
-                                performServerDeltaSync(
-                                    baseUrl = syncServerBaseUrl,
-                                    nodeId = localNodeId,
-                                    checkpointCounter = activePeerCheckpoint?.lastSeenCounter ?: 0L,
-                                    outgoingMutations = pendingMutationsRaw,
-                                )
+                            val serverOutcome = withContext(Dispatchers.IO) {
+                                if (useHttpDevFallback) {
+                                    performServerDeltaSyncHttpFallback(
+                                        baseUrl = httpBaseUrl.trimEnd('/'),
+                                        nodeId = localNodeId,
+                                        checkpointCounter = activePeerCheckpoint?.lastSeenCounter ?: 0L,
+                                        outgoingMutations = pendingMutationsRaw,
+                                    )
+                                } else {
+                                    performServerDeltaSync(
+                                        host = grpcHost,
+                                        port = grpcPort ?: DEFAULT_SYNC_GRPC_PORT,
+                                        nodeId = localNodeId,
+                                        checkpointCounter = activePeerCheckpoint?.lastSeenCounter ?: 0L,
+                                        outgoingMutations = pendingMutationsRaw,
+                                    )
+                                }
                             }
 
+                            val serverResult = serverOutcome.result
+
                             if (serverResult == null) {
-                                syncMessage = "SYNC_ERROR"
+                                syncMessage = if (useHttpDevFallback) {
+                                    "SYNC_ERROR_HTTP_DEV_FALLBACK: ${serverOutcome.errorDetail ?: "unknown"}"
+                                } else {
+                                    "SYNC_ERROR_GRPC: ${serverOutcome.errorDetail ?: "unknown"}"
+                                }
+                                Log.e(
+                                    SYNC_UI_LOG_TAG,
+                                    "Server sync failed with state='$syncMessage' (useHttpFallback=$useHttpDevFallback, grpcHost='${syncGrpcHostInput.trim()}', grpcPort='${syncGrpcPortInput.trim()}', httpBaseUrl='${syncServerBaseUrlInput.trim()}')",
+                                )
                                 syncInProgress = false
                                 return@launch
                             }
@@ -164,16 +286,10 @@ internal fun SyncStatusScreen(repository: LocalRepository) {
                                 lastSyncTimestamp = now,
                                 updatedAt = now,
                             )
-                            appendMutation(
-                                repository,
-                                entityType = "sync_checkpoint",
-                                entityId = peerId,
-                                operationType = "UPSERT"
-                            )
 
                             lastServerSyncAt = now
                             syncMessage = serverResult.message.ifEmpty {
-                                "SYNC_OK"
+                                if (useHttpDevFallback) "SYNC_OK_HTTP_DEV_FALLBACK" else "SYNC_OK_GRPC"
                             }
                             syncInProgress = false
                         }
@@ -251,12 +367,6 @@ internal fun SyncStatusScreen(repository: LocalRepository) {
                                     lastSeenCounter = checkpointCounter + peerResult.syncedMutationIds.size,
                                     lastSyncTimestamp = now,
                                     updatedAt = now,
-                                )
-                                appendMutation(
-                                    repository,
-                                    entityType = "sync_checkpoint",
-                                    entityId = peerId,
-                                    operationType = "UPSERT"
                                 )
                                 peerSyncMessage = "PEER_SYNC_OK"
                             } else {
@@ -366,8 +476,10 @@ internal fun SyncStatusScreen(repository: LocalRepository) {
 
         Text("Known Peer Checkpoints", fontWeight = FontWeight.Bold)
 
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(checkpoints, key = { it.peerId }) { checkpoint ->
+        if (checkpoints.isEmpty()) {
+            Text("No checkpoints recorded")
+        } else {
+            checkpoints.forEach { checkpoint ->
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(checkpoint.peerId, fontWeight = FontWeight.Bold)
@@ -383,8 +495,10 @@ internal fun SyncStatusScreen(repository: LocalRepository) {
 
         Text("Pending Mutation Queue", fontWeight = FontWeight.Bold)
 
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(pendingMutations, key = { it.mutationId }) { mutation ->
+        if (pendingMutations.isEmpty()) {
+            Text("No pending mutations")
+        } else {
+            pendingMutations.forEach { mutation ->
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text("${mutation.operationType} ${mutation.entityType}", fontWeight = FontWeight.Bold)
@@ -396,4 +510,16 @@ internal fun SyncStatusScreen(repository: LocalRepository) {
             }
         }
     }
+}
+
+private fun isLikelyEmulator(): Boolean {
+    val fingerprint = Build.FINGERPRINT.lowercase()
+    val model = Build.MODEL.lowercase()
+    val product = Build.PRODUCT.lowercase()
+    return fingerprint.contains("generic") ||
+        fingerprint.contains("emulator") ||
+        model.contains("sdk") ||
+        model.contains("emulator") ||
+        product.contains("sdk") ||
+        product.contains("emulator")
 }

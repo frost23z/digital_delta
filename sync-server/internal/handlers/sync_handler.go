@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -54,24 +55,33 @@ func (h *SyncHandler) RegisterNode(
 	req *digitaldeltav1.RegisterNodeRequest,
 ) (*digitaldeltav1.RegisterNodeResponse, error) {
 	if req == nil {
+		log.Printf("[sync-grpc] RegisterNode invalid: nil request")
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
-	if req.GetNodeId() == "" {
+	nodeID := req.GetNodeId()
+	if nodeID == "" {
+		log.Printf("[sync-grpc] RegisterNode invalid: node_id is required")
 		return nil, status.Error(codes.InvalidArgument, "node_id is required")
 	}
 
+	log.Printf("[sync-grpc] RegisterNode start node_id=%s role=%s", nodeID, req.GetRole())
+
 	now := uint64(h.nowFn().Unix())
+	registeredCount := 0
 	h.nodesMu.Lock()
-	h.nodes[req.GetNodeId()] = registeredNode{
+	h.nodes[nodeID] = registeredNode{
 		PublicKey:    req.GetPublicKey(),
 		Role:         req.GetRole(),
 		RegisteredAt: now,
 	}
+	registeredCount = len(h.nodes)
 	h.nodesMu.Unlock()
 
-	if h.checkpoints.Get(req.GetNodeId()) == nil {
-		h.checkpoints.Save(req.GetNodeId(), &digitaldeltav1.SyncCheckpoint{LastSeenCounterByDevice: map[string]uint64{}})
+	if h.checkpoints.Get(nodeID) == nil {
+		h.checkpoints.Save(nodeID, &digitaldeltav1.SyncCheckpoint{LastSeenCounterByDevice: map[string]uint64{}})
 	}
+
+	log.Printf("[sync-grpc] RegisterNode ok node_id=%s registered_nodes=%d", nodeID, registeredCount)
 
 	return &digitaldeltav1.RegisterNodeResponse{
 		Ok:         true,
@@ -85,18 +95,33 @@ func (h *SyncHandler) DeltaSync(
 	req *digitaldeltav1.DeltaSyncRequest,
 ) (*digitaldeltav1.DeltaSyncResponse, error) {
 	if req == nil {
+		log.Printf("[sync-grpc] DeltaSync invalid: nil request")
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
 	nodeID := req.GetNodeId()
 	if nodeID == "" {
+		log.Printf("[sync-grpc] DeltaSync invalid: node_id is required")
 		return nil, status.Error(codes.InvalidArgument, "node_id is required")
 	}
 
+	checkpointEntries := 0
+	if cp := req.GetCheckpoint(); cp != nil {
+		checkpointEntries = len(cp.GetLastSeenCounterByDevice())
+	}
+	log.Printf(
+		"[sync-grpc] DeltaSync start node_id=%s outgoing=%d checkpoint_entries=%d",
+		nodeID,
+		len(req.GetOutgoingMutations()),
+		checkpointEntries,
+	)
+
 	for _, mutation := range req.GetOutgoingMutations() {
 		if mutation == nil || mutation.GetMutationId() == "" {
+			log.Printf("[sync-grpc] DeltaSync invalid mutation: missing mutation_id node_id=%s", nodeID)
 			return nil, status.Error(codes.InvalidArgument, "each outgoing mutation must include mutation_id")
 		}
 		if err := h.verifier.VerifyMutation(nodeID, mutation); err != nil {
+			log.Printf("[sync-grpc] DeltaSync signature verification failed node_id=%s mutation_id=%s err=%v", nodeID, mutation.GetMutationId(), err)
 			return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("signature verification failed for mutation %s: %v", mutation.GetMutationId(), err))
 		}
 	}
@@ -124,6 +149,14 @@ func (h *SyncHandler) DeltaSync(
 	}
 
 	h.checkpoints.Save(nodeID, updatedCheckpoint)
+
+	log.Printf(
+		"[sync-grpc] DeltaSync ok node_id=%s outgoing=%d incoming=%d updated_checkpoint_entries=%d",
+		nodeID,
+		len(req.GetOutgoingMutations()),
+		len(incomingMutations),
+		len(updatedCheckpoint.GetLastSeenCounterByDevice()),
+	)
 
 	return &digitaldeltav1.DeltaSyncResponse{
 		IncomingMutations: incomingMutations,

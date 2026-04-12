@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.Exec
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -38,6 +40,42 @@ android {
     buildFeatures {
         compose = true
     }
+    sourceSets {
+        getByName("main") {
+            java.srcDir(file("build/generated/proto/java"))
+        }
+    }
+}
+
+val protoDir = rootProject.projectDir.parentFile.resolve("proto")
+val outDirProvider = layout.buildDirectory.dir("generated/proto/java")
+
+val generateProtoJava by tasks.registering(Exec::class) {
+    inputs.dir(protoDir)
+    outputs.dir(outDirProvider)
+
+    doFirst {
+        val protoFiles = protoDir
+            .listFiles { file -> file.isFile && file.extension == "proto" }
+            ?.sortedBy { it.name }
+            .orEmpty()
+
+        if (protoFiles.isEmpty()) {
+            throw GradleException("No .proto files found under ${protoDir.absolutePath}")
+        }
+
+        val outDir = outDirProvider.get().asFile
+        outDir.mkdirs()
+
+        executable = "protoc"
+        args("--proto_path=${protoDir.absolutePath}")
+        args("--java_out=${outDir.absolutePath}")
+        args(protoFiles.map { it.absolutePath })
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(generateProtoJava)
 }
 
 dependencies {
@@ -53,6 +91,11 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.sqldelight.android.driver)
     implementation(libs.sqldelight.coroutines.extensions)
+    implementation(libs.grpc.okhttp)
+    implementation(libs.grpc.stub)
+    implementation(libs.grpc.protobuf)
+    implementation(libs.protobuf.java)
+    implementation(libs.javax.annotation.api)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

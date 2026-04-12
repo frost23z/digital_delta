@@ -1,9 +1,22 @@
 package me.zayedbinhasan.android_app.ui.logic.m3_mesh
 
+import android.util.Log
+import io.grpc.CallOptions
+import io.grpc.ManagedChannel
+import io.grpc.ManagedChannelBuilder
+import io.grpc.MethodDescriptor
+import io.grpc.protobuf.ProtoUtils
+import io.grpc.stub.ClientCalls
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import me.zayedbinhasan.digitaldelta.proto.DeltaSyncRequest
+import me.zayedbinhasan.digitaldelta.proto.Mutation
+import me.zayedbinhasan.digitaldelta.proto.RegisterNodeRequest
+import me.zayedbinhasan.digitaldelta.proto.RegisterNodeResponse
+import me.zayedbinhasan.digitaldelta.proto.SyncCheckpoint
+import me.zayedbinhasan.digitaldelta.proto.VectorClock
+import me.zayedbinhasan.digitaldelta.proto.DeltaSyncResponse
 import me.zayedbinhasan.android_app.data.local.repository.LocalRepository
-import me.zayedbinhasan.android_app.ui.logic.core.appendMutation
 import me.zayedbinhasan.android_app.ui.logic.m2_crdt.applyIncomingMutations
 import me.zayedbinhasan.android_app.ui.models.IncomingMutation
 import me.zayedbinhasan.data.Mutation_logs
@@ -16,12 +29,18 @@ import java.net.Socket
 import java.net.SocketTimeoutException
 import java.net.URL
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.TimeUnit
 
 internal data class ServerDeltaSyncResult(
     val syncedMutationIds: List<String>,
     val incomingMutations: List<IncomingMutation>,
     val updatedCheckpoint: Map<String, Long>,
     val message: String,
+)
+
+internal data class ServerSyncTransportOutcome(
+    val result: ServerDeltaSyncResult? = null,
+    val errorDetail: String? = null,
 )
 
 internal data class PeerTransferStatus(
@@ -47,6 +66,25 @@ internal data class PeerRelayEnvelope(
     val attemptCount: Int,
     val payload: JSONObject,
 )
+
+private const val SYNC_SERVICE_NAME = "digitaldelta.v1.SyncService"
+private const val SYNC_LOG_TAG = "DigitalDeltaSync"
+
+private val REGISTER_NODE_METHOD: MethodDescriptor<RegisterNodeRequest, RegisterNodeResponse> =
+    MethodDescriptor.newBuilder<RegisterNodeRequest, RegisterNodeResponse>()
+        .setType(MethodDescriptor.MethodType.UNARY)
+        .setFullMethodName(MethodDescriptor.generateFullMethodName(SYNC_SERVICE_NAME, "RegisterNode"))
+        .setRequestMarshaller(ProtoUtils.marshaller(RegisterNodeRequest.getDefaultInstance()))
+        .setResponseMarshaller(ProtoUtils.marshaller(RegisterNodeResponse.getDefaultInstance()))
+        .build()
+
+private val DELTA_SYNC_METHOD: MethodDescriptor<DeltaSyncRequest, DeltaSyncResponse> =
+    MethodDescriptor.newBuilder<DeltaSyncRequest, DeltaSyncResponse>()
+        .setType(MethodDescriptor.MethodType.UNARY)
+        .setFullMethodName(MethodDescriptor.generateFullMethodName(SYNC_SERVICE_NAME, "DeltaSync"))
+        .setRequestMarshaller(ProtoUtils.marshaller(DeltaSyncRequest.getDefaultInstance()))
+        .setResponseMarshaller(ProtoUtils.marshaller(DeltaSyncResponse.getDefaultInstance()))
+        .build()
 
 internal fun buildDeltaSyncRequestJson(
     nodeId: String,
@@ -77,6 +115,44 @@ internal fun buildDeltaSyncRequestJson(
         }
         put("outgoing_mutations", outgoingArray)
     }
+}
+
+internal fun buildDeltaSyncRequestProto(
+    nodeId: String,
+    checkpointCounter: Long,
+    outgoingMutations: List<Mutation_logs>,
+): DeltaSyncRequest {
+    val checkpoint = SyncCheckpoint.newBuilder()
+        .putLastSeenCounterByDevice(nodeId, checkpointCounter.coerceAtLeast(0L))
+        .build()
+
+    val requestBuilder = DeltaSyncRequest.newBuilder()
+        .setNodeId(nodeId)
+        .setCheckpoint(checkpoint)
+
+    outgoingMutations.forEach { mutation ->
+        val changedFields = parseStringMap(mutation.changed_fields_json)
+        val vectorClock = parseLongMap(mutation.vector_clock_json)
+            .mapValues { entry -> entry.value.coerceAtLeast(0L) }
+
+        requestBuilder.addOutgoingMutations(
+            Mutation.newBuilder()
+                .setMutationId(mutation.mutation_id)
+                .setEntityType(mutation.entity_type)
+                .setEntityId(mutation.entity_id)
+                .putAllChangedFields(changedFields)
+                .setVectorClock(
+                    VectorClock.newBuilder()
+                        .putAllCounters(vectorClock)
+                        .build(),
+                )
+                .setActorId(mutation.actor_id)
+                .setTimestamp(mutation.mutation_timestamp.coerceAtLeast(0L))
+                .build(),
+        )
+    }
+
+    return requestBuilder.build()
 }
 
 internal fun performPeerDeltaSyncLan(
@@ -218,7 +294,6 @@ internal fun receivePeerDeltaSyncOnce(
                     lastSyncTimestamp = now,
                     updatedAt = now,
                 )
-                appendMutation(repository, entityType = "sync_checkpoint", entityId = requesterId, operationType = "UPSERT")
 
                 val responseRelay = JSONObject().apply {
                     put("message_id", "${requestRelay.messageId}-ack")
@@ -355,12 +430,125 @@ internal fun parseIncomingMutationsArray(mutationsArray: JSONArray): List<Incomi
     return incomingMutations
 }
 
+internal fun parseIncomingMutationsProto(mutations: List<Mutation>): List<IncomingMutation> {
+    val incomingMutations = mutableListOf<IncomingMutation>()
+
+    mutations.forEach { mutation ->
+        val entityType = mutation.entityType
+        val entityId = mutation.entityId
+        val timestamp = mutation.timestamp
+        val changedFields = mutation.changedFieldsMap
+
+        changedFields.forEach { (fieldName, remoteValue) ->
+            val strategy = when (fieldName) {
+                "quantity" -> "ADDITIVE"
+                "assigned_driver_id" -> "MANUAL_OWNERSHIP"
+                else -> "LWW"
+            }
+            incomingMutations += IncomingMutation(
+                entityType = entityType,
+                entityId = entityId,
+                fieldName = fieldName,
+                remoteValue = remoteValue,
+                mergeStrategy = strategy,
+                timestamp = timestamp,
+            )
+        }
+    }
+
+    return incomingMutations
+}
+
 internal fun performServerDeltaSync(
+    host: String,
+    port: Int,
+    nodeId: String,
+    checkpointCounter: Long,
+    outgoingMutations: List<Mutation_logs>,
+): ServerSyncTransportOutcome {
+    Log.i(
+        SYNC_LOG_TAG,
+        "Starting gRPC sync: host=$host port=$port node=$nodeId checkpoint=$checkpointCounter outgoing=${outgoingMutations.size}",
+    )
+
+    val channel = ManagedChannelBuilder
+        .forAddress(host, port)
+        .usePlaintext()
+        .build()
+
+    val syncResult = runCatching {
+        val callOptions = CallOptions.DEFAULT.withDeadlineAfter(6, TimeUnit.SECONDS)
+
+        val registerResponse = ClientCalls.blockingUnaryCall(
+            channel,
+            REGISTER_NODE_METHOD,
+            callOptions,
+            RegisterNodeRequest.newBuilder()
+                .setNodeId(nodeId)
+                .setRole("ANDROID_CLIENT")
+                .build(),
+        )
+
+        if (!registerResponse.ok) {
+            throw IllegalStateException("register rejected: ${registerResponse.reason.ifBlank { "unknown reason" }}")
+        }
+
+        val deltaResponse = ClientCalls.blockingUnaryCall(
+            channel,
+            DELTA_SYNC_METHOD,
+            callOptions,
+            buildDeltaSyncRequestProto(
+                nodeId = nodeId,
+                checkpointCounter = checkpointCounter,
+                outgoingMutations = outgoingMutations,
+            ),
+        )
+
+        val incomingMutations = parseIncomingMutationsProto(deltaResponse.incomingMutationsList)
+        val updatedCheckpoint = deltaResponse.updatedCheckpoint.lastSeenCounterByDeviceMap
+            .mapValues { entry -> entry.value.coerceAtLeast(0L) }
+
+        ServerDeltaSyncResult(
+            syncedMutationIds = outgoingMutations.map { it.mutation_id },
+            incomingMutations = incomingMutations,
+            updatedCheckpoint = updatedCheckpoint,
+            message = if (deltaResponse.hasConflicts) "SYNC_OK_GRPC_CONFLICTS" else "SYNC_OK_GRPC",
+        )
+    }.fold(
+        onSuccess = { success ->
+            Log.i(
+                SYNC_LOG_TAG,
+                "gRPC sync success: incoming=${success.incomingMutations.size} synced=${success.syncedMutationIds.size} message=${success.message}",
+            )
+            ServerSyncTransportOutcome(result = success)
+        },
+        onFailure = { failure ->
+            Log.e(
+                SYNC_LOG_TAG,
+                "gRPC sync failed: host=$host port=$port node=$nodeId checkpoint=$checkpointCounter outgoing=${outgoingMutations.size}",
+                failure,
+            )
+            ServerSyncTransportOutcome(
+                errorDetail = "${failure::class.java.simpleName}: ${failure.message ?: "no message"}",
+            )
+        },
+    )
+
+    shutdownGrpcChannel(channel)
+    return syncResult
+}
+
+internal fun performServerDeltaSyncHttpFallback(
     baseUrl: String,
     nodeId: String,
     checkpointCounter: Long,
     outgoingMutations: List<Mutation_logs>,
-): ServerDeltaSyncResult? {
+): ServerSyncTransportOutcome {
+    Log.i(
+        SYNC_LOG_TAG,
+        "Starting HTTP fallback sync: baseUrl=$baseUrl node=$nodeId checkpoint=$checkpointCounter outgoing=${outgoingMutations.size}",
+    )
+
     return runCatching {
         val requestJson = buildDeltaSyncRequestJson(nodeId, checkpointCounter, outgoingMutations)
 
@@ -384,8 +572,14 @@ internal fun performServerDeltaSync(
             ?: ""
         connection.disconnect()
 
-        if (responseCode !in 200..299 || responseBody.isBlank()) {
-            return null
+        if (responseCode !in 200..299) {
+            throw IllegalStateException(
+                "http $responseCode ${responseBody.take(180).ifBlank { "no response body" }}",
+            )
+        }
+
+        if (responseBody.isBlank()) {
+            throw IllegalStateException("http 2xx with empty body")
         }
 
         val responseJson = JSONObject(responseBody)
@@ -427,9 +621,38 @@ internal fun performServerDeltaSync(
             syncedMutationIds = syncedIds,
             incomingMutations = incomingMutations,
             updatedCheckpoint = updatedCheckpoint,
-            message = responseJson.optString("message"),
+            message = responseJson.optString("message").ifBlank { "SYNC_OK_HTTP_DEV_FALLBACK" },
         )
-    }.getOrNull()
+    }.fold(
+        onSuccess = { success ->
+            Log.i(
+                SYNC_LOG_TAG,
+                "HTTP fallback sync success: incoming=${success.incomingMutations.size} synced=${success.syncedMutationIds.size} message=${success.message}",
+            )
+            ServerSyncTransportOutcome(result = success)
+        },
+        onFailure = { failure ->
+            Log.e(
+                SYNC_LOG_TAG,
+                "HTTP fallback sync failed: baseUrl=$baseUrl node=$nodeId checkpoint=$checkpointCounter outgoing=${outgoingMutations.size}",
+                failure,
+            )
+            ServerSyncTransportOutcome(
+                errorDetail = "${failure::class.java.simpleName}: ${failure.message ?: "no message"}",
+            )
+        },
+    )
+}
+
+private fun shutdownGrpcChannel(channel: ManagedChannel) {
+    channel.shutdown()
+    val terminated = runCatching {
+        channel.awaitTermination(500, TimeUnit.MILLISECONDS)
+    }.getOrDefault(false)
+
+    if (!terminated) {
+        channel.shutdownNow()
+    }
 }
 
 internal fun parseLongMap(rawJson: String?): Map<String, Long> {
