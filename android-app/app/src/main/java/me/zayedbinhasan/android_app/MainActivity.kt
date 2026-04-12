@@ -23,7 +23,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -83,12 +82,20 @@ private data class AppDestination(
     val icon: ImageVector,
 )
 
+private object AppRoutes {
+    const val DASHBOARD = "dashboard"
+    const val DELIVERIES = "deliveries"
+    const val ROUTE = "route"
+    const val POD = "pod"
+    const val SYNC_STATUS = "sync_status"
+}
+
 private val appDestinations = listOf(
-    AppDestination(route = "dashboard", title = "Dashboard", icon = Icons.Filled.Dashboard),
-    AppDestination(route = "deliveries", title = "Deliveries", icon = Icons.Filled.Inventory2),
-    AppDestination(route = "route", title = "Route", icon = Icons.Filled.Directions),
-    AppDestination(route = "pod", title = "PoD", icon = Icons.Filled.QrCodeScanner),
-    AppDestination(route = "sync_status", title = "Sync Status", icon = Icons.Filled.Sync),
+    AppDestination(route = AppRoutes.DASHBOARD, title = "Dashboard", icon = Icons.Filled.Dashboard),
+    AppDestination(route = AppRoutes.DELIVERIES, title = "Deliveries", icon = Icons.Filled.Inventory2),
+    AppDestination(route = AppRoutes.ROUTE, title = "Route", icon = Icons.Filled.Directions),
+    AppDestination(route = AppRoutes.POD, title = "PoD", icon = Icons.Filled.QrCodeScanner),
+    AppDestination(route = AppRoutes.SYNC_STATUS, title = "Sync Status", icon = Icons.Filled.Sync),
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -162,7 +169,7 @@ private fun BottomNavigationBar(navController: NavHostController, currentRoute: 
                 selected = currentRoute == destination.route,
                 onClick = {
                     navController.navigate(destination.route) {
-                        popUpTo(navController.graph.startDestinationId) {
+                        popUpTo(AppRoutes.DASHBOARD) {
                             saveState = true
                         }
                         launchSingleTop = true
@@ -176,7 +183,6 @@ private fun BottomNavigationBar(navController: NavHostController, currentRoute: 
                         contentDescription = destination.title,
                     )
                 },
-                colors = NavigationBarItemDefaults.colors(),
             )
         }
     }
@@ -186,38 +192,38 @@ private fun BottomNavigationBar(navController: NavHostController, currentRoute: 
 private fun AppNavHost(navController: NavHostController, modifier: Modifier = Modifier) {
     NavHost(
         navController = navController,
-        startDestination = appDestinations.first().route,
+        startDestination = AppRoutes.DASHBOARD,
         modifier = modifier.fillMaxSize(),
     ) {
-        composable("dashboard") {
+        composable(AppRoutes.DASHBOARD) {
             PlaceholderScreen(
                 title = "Dashboard",
                 description = "You can monitor overall mission progress, priority alerts, and team activity in one place.",
                 statusMessage = "Status: Dashboard shell ready",
             )
         }
-        composable("deliveries") {
+        composable(AppRoutes.DELIVERIES) {
             PlaceholderScreen(
                 title = "Deliveries",
                 description = "You can track assigned deliveries, see current state, and follow handoff progress.",
                 statusMessage = "Status: Delivery screen ready for live data binding",
             )
         }
-        composable("route") {
+        composable(AppRoutes.ROUTE) {
             PlaceholderScreen(
                 title = "Route",
                 description = "You can view planned routes, changes from disruptions, and updated ETA guidance.",
                 statusMessage = "Status: Route screen ready for map and reroute integration",
             )
         }
-        composable("pod") {
+        composable(AppRoutes.POD) {
             PlaceholderScreen(
                 title = "Proof of Delivery (PoD)",
                 description = "You can verify handoffs with QR scan flow and delivery confirmation records.",
                 statusMessage = "Status: PoD screen ready for QR workflow integration",
             )
         }
-        composable("sync_status") {
+        composable(AppRoutes.SYNC_STATUS) {
             PlaceholderScreen(
                 title = "Sync Status",
                 description = "You can check connectivity health, sync progress, and conflict indicators before dispatch.",
