@@ -4,11 +4,17 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import androidx.core.content.edit
 import java.nio.ByteBuffer
+import java.nio.charset.StandardCharsets
+import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.MessageDigest
+import java.security.PrivateKey
 import java.security.SecureRandom
+import java.security.Signature
+import java.security.spec.X509EncodedKeySpec
 import java.util.UUID
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
@@ -30,6 +36,8 @@ private const val OTP_DIGITS = 6
 private const val OTP_PERIOD_SECONDS = 30L
 private const val OTP_MAX_FAILED_ATTEMPTS = 5
 private const val OTP_LOCKOUT_DURATION_MS = 2 * 60 * 1000L
+//noinspection SpellCheckingInspection
+private const val OTP_HMAC_ALGORITHM = "HmacSHA256"
 
 data class CachedIdentity(
     val userId: String,
@@ -85,10 +93,10 @@ class OfflineAuthManager(
     }
 
     fun clearActiveSession() {
-        prefs.edit()
-            .remove(KEY_SESSION_USER_ID)
-            .remove(KEY_SESSION_ROLE)
-            .apply()
+        prefs.edit {
+            remove(KEY_SESSION_USER_ID)
+            remove(KEY_SESSION_ROLE)
+        }
     }
 
     fun provisionIdentity(userId: String, role: String): CachedIdentity? {
@@ -126,14 +134,16 @@ class OfflineAuthManager(
             if (readSecret() == null) {
                 val secret = ByteArray(20)
                 SecureRandom().nextBytes(secret)
-                prefs.edit().putString(KEY_CACHED_SECRET, Base64.encodeToString(secret, Base64.NO_WRAP)).apply()
+                prefs.edit {
+                    putString(KEY_CACHED_SECRET, Base64.encodeToString(secret, Base64.NO_WRAP))
+                }
             }
 
-            prefs.edit()
-                .putString(KEY_CACHED_USER_ID, normalizedUserId)
-                .putString(KEY_CACHED_ROLE, normalizedRole)
-                .putString(KEY_CACHED_ALIAS, alias)
-                .apply()
+            prefs.edit {
+                putString(KEY_CACHED_USER_ID, normalizedUserId)
+                putString(KEY_CACHED_ROLE, normalizedRole)
+                putString(KEY_CACHED_ALIAS, alias)
+            }
 
             appendAuditEvent(
                 eventType = "AUTH_PROVISION_SUCCESS",
@@ -228,10 +238,10 @@ class OfflineAuthManager(
             return null
         }
 
-        prefs.edit()
-            .putString(KEY_SESSION_USER_ID, user.user_id)
-            .putString(KEY_SESSION_ROLE, user.role)
-            .apply()
+        prefs.edit {
+            putString(KEY_SESSION_USER_ID, user.user_id)
+            putString(KEY_SESSION_ROLE, user.role)
+        }
 
         clearFailedOtpState()
         appendMutation(entityType = "auth_session", entityId = user.user_id, operationType = "UPSERT_OFFLINE_SESSION")
@@ -251,9 +261,36 @@ class OfflineAuthManager(
 
     fun lockoutRemainingSeconds(): Long = currentLockoutRemainingSeconds()
 
+    fun signPayloadHashForUser(userId: String, payloadHash: String): String? {
+        val alias = keyAliasForUser(userId)
+        DeviceKeyStore.ensureKeyAndGetPublicKey(alias) ?: return null
+        return DeviceKeyStore.signPayloadHash(alias, payloadHash)
+    }
+
+    fun verifyPayloadHashSignature(publicKeyBase64: String, payloadHash: String, signatureBase64: String): Boolean {
+        return DeviceKeyStore.verifyPayloadHashSignature(
+            publicKeyBase64 = publicKeyBase64,
+            payloadHash = payloadHash,
+            signatureBase64 = signatureBase64,
+        )
+    }
+
+    fun recordAuditEvent(
+        eventType: String,
+        actorId: String,
+        entityType: String,
+        entityId: String,
+    ) {
+        appendAuditEvent(
+            eventType = eventType,
+            actorId = actorId,
+            entityType = entityType,
+            entityId = entityId,
+        )
+    }
+
     private fun registerFailedOtpAttempt(userId: String) {
         val nextAttempts = prefs.getInt(KEY_FAILED_OTP_ATTEMPTS, 0) + 1
-        val editor = prefs.edit().putInt(KEY_FAILED_OTP_ATTEMPTS, nextAttempts)
 
         appendAuditEvent(
             eventType = "AUTH_LOGIN_FAILURE",
@@ -263,24 +300,28 @@ class OfflineAuthManager(
         )
 
         if (nextAttempts >= OTP_MAX_FAILED_ATTEMPTS) {
-            editor.putInt(KEY_FAILED_OTP_ATTEMPTS, 0)
-            editor.putLong(KEY_LOCKOUT_UNTIL_MS, System.currentTimeMillis() + OTP_LOCKOUT_DURATION_MS)
+            prefs.edit {
+                putInt(KEY_FAILED_OTP_ATTEMPTS, 0)
+                putLong(KEY_LOCKOUT_UNTIL_MS, System.currentTimeMillis() + OTP_LOCKOUT_DURATION_MS)
+            }
             appendAuditEvent(
                 eventType = "AUTH_LOGIN_LOCKED",
                 actorId = userId,
                 entityType = "auth_session",
                 entityId = userId,
             )
+        } else {
+            prefs.edit {
+                putInt(KEY_FAILED_OTP_ATTEMPTS, nextAttempts)
+            }
         }
-
-        editor.apply()
     }
 
     private fun clearFailedOtpState() {
-        prefs.edit()
-            .putInt(KEY_FAILED_OTP_ATTEMPTS, 0)
-            .remove(KEY_LOCKOUT_UNTIL_MS)
-            .apply()
+        prefs.edit {
+            putInt(KEY_FAILED_OTP_ATTEMPTS, 0)
+            remove(KEY_LOCKOUT_UNTIL_MS)
+        }
     }
 
     private fun currentLockoutRemainingSeconds(): Long {
@@ -325,7 +366,22 @@ class OfflineAuthManager(
         }.getOrNull()
     }
 
-    private fun appendMutation(entityType: String, entityId: String, operationType: String) {
+    private fun keyAliasForUser(userId: String): String {
+        val normalizedUserId = userId.trim()
+        val cachedUserId = prefs.getString(KEY_CACHED_USER_ID, null)
+        val cachedAlias = prefs.getString(KEY_CACHED_ALIAS, null)
+        if (cachedUserId == normalizedUserId && !cachedAlias.isNullOrBlank()) {
+            return cachedAlias
+        }
+        return "digital_delta_key_$normalizedUserId"
+    }
+
+    private fun appendMutation(
+        entityType: String,
+        entityId: String,
+        operationType: String,
+        actorId: String = "offline_auth",
+    ) {
         runCatching {
             val deviceId = "android_client"
             val nextCounter = repository.localDeviceMutationCount(deviceId) + 1
@@ -337,7 +393,7 @@ class OfflineAuthManager(
                 operationType = operationType,
                 changedFieldsJson = "{}",
                 vectorClockJson = vectorClockJson,
-                actorId = "offline_auth",
+                actorId = actorId,
                 deviceId = deviceId,
                 mutationTimestamp = System.currentTimeMillis(),
                 synced = false,
@@ -404,6 +460,33 @@ private object DeviceKeyStore {
         }.getOrNull()
     }
 
+    fun signPayloadHash(alias: String, payloadHash: String): String? {
+        return runCatching {
+            val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER)
+            keyStore.load(null)
+            val privateKey = keyStore.getKey(alias, null) as? PrivateKey ?: return null
+
+            val signer = Signature.getInstance("SHA256withRSA")
+            signer.initSign(privateKey)
+            signer.update(payloadHash.toByteArray(StandardCharsets.UTF_8))
+            Base64.encodeToString(signer.sign(), Base64.NO_WRAP)
+        }.getOrNull()
+    }
+
+    fun verifyPayloadHashSignature(publicKeyBase64: String, payloadHash: String, signatureBase64: String): Boolean {
+        return runCatching {
+            val publicKeyBytes = Base64.decode(publicKeyBase64, Base64.NO_WRAP)
+            val signatureBytes = Base64.decode(signatureBase64, Base64.NO_WRAP)
+            val publicKey = KeyFactory.getInstance("RSA")
+                .generatePublic(X509EncodedKeySpec(publicKeyBytes))
+
+            val verifier = Signature.getInstance("SHA256withRSA")
+            verifier.initVerify(publicKey)
+            verifier.update(payloadHash.toByteArray(StandardCharsets.UTF_8))
+            verifier.verify(signatureBytes)
+        }.getOrDefault(false)
+    }
+
     private fun generate(alias: String) {
         runCatching {
             val generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_RSA, KEYSTORE_PROVIDER)
@@ -427,8 +510,8 @@ private object Totp {
         val counter = timeSeconds / OTP_PERIOD_SECONDS
         val data = ByteBuffer.allocate(8).putLong(counter).array()
 
-        val mac = Mac.getInstance("HmacSHA256")
-        mac.init(SecretKeySpec(secret, "HmacSHA256"))
+        val mac = Mac.getInstance(OTP_HMAC_ALGORITHM)
+        mac.init(SecretKeySpec(secret, OTP_HMAC_ALGORITHM))
         val hash = mac.doFinal(data)
 
         val offset = hash.last().toInt() and 0x0f

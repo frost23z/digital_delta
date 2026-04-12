@@ -38,6 +38,9 @@ class LocalRepository(
     fun observeReceipts(): Flow<List<Receipts>> =
         queries.selectAllReceipts().asFlow().mapToList(ioDispatcher)
 
+    fun receiptByNonce(nonce: Long): Receipts? =
+        queries.selectReceiptByNonce(nonce).executeAsOneOrNull()
+
     fun observePendingMutations(): Flow<List<Mutation_logs>> =
         queries.selectPendingMutations().asFlow().mapToList(ioDispatcher)
 

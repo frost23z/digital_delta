@@ -212,6 +212,11 @@ SELECT *
 FROM receipts
 WHERE receipt_id = ?;
 
+selectReceiptByNonce:
+SELECT *
+FROM receipts
+WHERE nonce = ?;
+
 upsertReceipt:
 INSERT OR REPLACE INTO receipts(
   receipt_id,
