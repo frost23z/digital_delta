@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package digitaldelta.v1;
+
+option go_package = "github.com/frost23z/digital_delta/sync-server/internal/gen/proto;digitaldeltav1";
+option java_multiple_files = true;
+option java_package = "me.zayedbinhasan.digitaldelta.proto";
+
+import "common.proto";
+
+enum PriorityTier {
+  PRIORITY_TIER_UNSPECIFIED = 0;
+  P0_CRITICAL = 1;
+  P1_HIGH = 2;
+  P2_STANDARD = 3;
+  P3_LOW = 4;
+}
+
+enum DeliveryStatus {
+  DELIVERY_STATUS_UNSPECIFIED = 0;
+  PENDING = 1;
+  IN_TRANSIT = 2;
+  DELIVERED = 3;
+  FAILED = 4;
+  PREEMPTED = 5;
+}
+
+enum ConflictResolution {
+  CONFLICT_RESOLUTION_UNSPECIFIED = 0;
+  AUTO_LWW = 1;
+  AUTO_ADDITIVE = 2;
+  MANUAL_REQUIRED = 3;
+}
+
+message DeliveryTask {
+  string task_id = 1;
+  string supply_id = 2;
+  int32 quantity = 3;
+  string origin_id = 4;
+  string destination_id = 5;
+  PriorityTier priority = 6;
+  int64 deadline_timestamp = 7;
+  string assigned_driver_id = 8;
+  DeliveryStatus status = 9;
+  uint64 updated_at = 10;
+  VectorClock vector_clock = 11;
+}
+
+message DeliveryConflict {
+  string conflict_id = 1;
+  string task_id = 2;
+  string local_mutation_id = 3;
+  string remote_mutation_id = 4;
+  ConflictResolution resolution = 5;
+  string notes = 6;
+  uint64 detected_at = 7;
+}

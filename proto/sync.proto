@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package digitaldelta.v1;
+
+option go_package = "github.com/frost23z/digital_delta/sync-server/internal/gen/proto;digitaldeltav1";
+option java_multiple_files = true;
+option java_package = "me.zayedbinhasan.digitaldelta.proto";
+
+import "common.proto";
+
+message Mutation {
+  string mutation_id = 1;
+  string entity_type = 2;
+  string entity_id = 3;
+  map<string, string> changed_fields = 4;
+  VectorClock vector_clock = 5;
+  string actor_id = 6;
+  uint64 timestamp = 7;
+  bytes payload_hash = 8;
+  bytes signature = 9;
+}
+
+message RegisterNodeRequest {
+  string node_id = 1;
+  string public_key = 2;
+  string role = 3;
+}
+
+message RegisterNodeResponse {
+  bool ok = 1;
+  string reason = 2;
+  uint64 server_time = 3;
+}
+
+message DeltaSyncRequest {
+  string node_id = 1;
+  SyncCheckpoint checkpoint = 2;
+  repeated Mutation outgoing_mutations = 3;
+}
+
+message DeltaSyncResponse {
+  repeated Mutation incoming_mutations = 1;
+  SyncCheckpoint updated_checkpoint = 2;
+  bool has_conflicts = 3;
+  repeated string conflict_entity_ids = 4;
+}
+
+service SyncService {
+  rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
+  rpc DeltaSync(DeltaSyncRequest) returns (DeltaSyncResponse);
+}

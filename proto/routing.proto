@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+package digitaldelta.v1;
+
+option go_package = "github.com/frost23z/digital_delta/sync-server/internal/gen/proto;digitaldeltav1";
+option java_multiple_files = true;
+option java_package = "me.zayedbinhasan.digitaldelta.proto";
+
+import "common.proto";
+
+enum NodeType {
+  NODE_TYPE_UNSPECIFIED = 0;
+  CENTRAL_COMMAND = 1;
+  SUPPLY_DROP = 2;
+  RELIEF_CAMP = 3;
+  WAYPOINT = 4;
+  HOSPITAL = 5;
+}
+
+enum EdgeType {
+  EDGE_TYPE_UNSPECIFIED = 0;
+  ROAD = 1;
+  WATERWAY = 2;
+  AIRWAY = 3;
+}
+
+enum VehicleType {
+  VEHICLE_TYPE_UNSPECIFIED = 0;
+  TRUCK = 1;
+  SPEEDBOAT = 2;
+  DRONE = 3;
+}
+
+message NetworkNode {
+  string node_id = 1;
+  string name = 2;
+  NodeType type = 3;
+  GeoLocation location = 4;
+}
+
+message NetworkEdge {
+  string edge_id = 1;
+  string source_id = 2;
+  string target_id = 3;
+  EdgeType type = 4;
+  int32 base_weight_mins = 5;
+  float risk_score = 6;
+  bool is_flooded = 7;
+  bool is_impassable = 8;
+  uint64 last_updated = 9;
+  VectorClock vector_clock = 10;
+}
+
+message Route {
+  string route_id = 1;
+  repeated string edge_ids = 2;
+  int32 total_duration_mins = 3;
+  VehicleType vehicle = 4;
+  int64 eta_timestamp = 5;
+  string reason_code = 6;
+  uint64 updated_at = 7;
+  VectorClock vector_clock = 8;
+}
+
+message RouteRequest {
+  string origin_id = 1;
+  string destination_id = 2;
+  VehicleType vehicle = 3;
+  int32 priority = 4;
+}
+
+message RouteResult {
+  Route route = 1;
+  float confidence = 2;
+  bool recomputed_due_to_chaos = 3;
+}

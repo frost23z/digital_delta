@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package digitaldelta.v1;
+
+option go_package = "github.com/frost23z/digital_delta/sync-server/internal/gen/proto;digitaldeltav1";
+option java_multiple_files = true;
+option java_package = "me.zayedbinhasan.digitaldelta.proto";
+
+import "common.proto";
+
+enum SupplyCategory {
+  SUPPLY_CATEGORY_UNSPECIFIED = 0;
+  MEDICAL = 1;
+  FOOD = 2;
+  WATER = 3;
+  SHELTER = 4;
+  CLOTHING = 5;
+  FUEL = 6;
+  OTHER = 7;
+}
+
+message SupplyItem {
+  string item_id = 1;
+  string name = 2;
+  SupplyCategory category = 3;
+  int32 quantity = 4;
+  int32 priority = 5;
+  string location_id = 6;
+  uint64 last_updated = 7;
+  VectorClock vector_clock = 8;
+}
+
+message InventoryAdjustment {
+  string adjustment_id = 1;
+  string item_id = 2;
+  int32 signed_delta = 3;
+  string reason = 4;
+  string actor_id = 5;
+  uint64 timestamp = 6;
+  VectorClock vector_clock = 7;
+}
