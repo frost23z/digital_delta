@@ -1,5 +1,7 @@
 package me.zayedbinhasan.android_app
 
+import app.cash.sqldelight.coroutines.asFlow
+import app.cash.sqldelight.coroutines.mapToList
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -9,6 +11,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Dashboard
@@ -20,16 +24,20 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -41,6 +49,11 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import me.zayedbinhasan.android_app.data.local.db.LocalDatabaseFactory
+import me.zayedbinhasan.data.Database
+import me.zayedbinhasan.data.LocalQueries
 import me.zayedbinhasan.android_app.ui.theme.AndroidappTheme
 
 class MainActivity : ComponentActivity() {
@@ -56,10 +69,13 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun DigitalDeltaApp() {
     AndroidappTheme {
+        val context = LocalContext.current
+        val database = remember { LocalDatabaseFactory.create(context.applicationContext) }
         var isAuthenticated by rememberSaveable { mutableStateOf(false) }
 
         if (isAuthenticated) {
             AuthenticatedShell(
+                database = database,
                 onLogout = { isAuthenticated = false },
             )
         } else {
@@ -132,7 +148,7 @@ private fun LoginScreen(onLoginClick: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AuthenticatedShell(onLogout: () -> Unit) {
+private fun AuthenticatedShell(database: Database, onLogout: () -> Unit) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route ?: appDestinations.first().route
@@ -155,6 +171,7 @@ private fun AuthenticatedShell(onLogout: () -> Unit) {
         },
     ) { innerPadding ->
         AppNavHost(
+            database = database,
             navController = navController,
             modifier = Modifier.padding(innerPadding),
         )
@@ -189,73 +206,454 @@ private fun BottomNavigationBar(navController: NavHostController, currentRoute: 
 }
 
 @Composable
-private fun AppNavHost(navController: NavHostController, modifier: Modifier = Modifier) {
+private fun AppNavHost(
+    database: Database,
+    navController: NavHostController,
+    modifier: Modifier = Modifier,
+) {
     NavHost(
         navController = navController,
         startDestination = AppRoutes.DASHBOARD,
         modifier = modifier.fillMaxSize(),
     ) {
         composable(AppRoutes.DASHBOARD) {
-            PlaceholderScreen(
-                title = "Dashboard",
-                description = "You can monitor overall mission progress, priority alerts, and team activity in one place.",
-                statusMessage = "Status: Dashboard shell ready",
-            )
+            DashboardScreen(database = database)
         }
         composable(AppRoutes.DELIVERIES) {
-            PlaceholderScreen(
-                title = "Deliveries",
-                description = "You can track assigned deliveries, see current state, and follow handoff progress.",
-                statusMessage = "Status: Delivery screen ready for live data binding",
-            )
+            DeliveriesScreen(database = database)
         }
         composable(AppRoutes.ROUTE) {
-            PlaceholderScreen(
-                title = "Route",
-                description = "You can view planned routes, changes from disruptions, and updated ETA guidance.",
-                statusMessage = "Status: Route screen ready for map and reroute integration",
-            )
+            RoutesScreen(database = database)
         }
         composable(AppRoutes.POD) {
-            PlaceholderScreen(
-                title = "Proof of Delivery (PoD)",
-                description = "You can verify handoffs with QR scan flow and delivery confirmation records.",
-                statusMessage = "Status: PoD screen ready for QR workflow integration",
-            )
+            PodScreen(database = database)
         }
         composable(AppRoutes.SYNC_STATUS) {
-            PlaceholderScreen(
-                title = "Sync Status",
-                description = "You can check connectivity health, sync progress, and conflict indicators before dispatch.",
-                statusMessage = "Status: Sync overview ready for live sync metrics",
-            )
+            SyncStatusScreen(database = database)
         }
     }
 }
 
 @Composable
-private fun PlaceholderScreen(title: String, description: String, statusMessage: String) {
+private fun DashboardScreen(database: Database) {
+    val queries = database.localQueries
+
+    val users by remember(queries) {
+        queries.selectAllUsers { userId, displayName, role, _, active, _, _ ->
+            UserUi(userId = userId, displayName = displayName, role = role, active = active)
+        }.asFlow().mapToList(Dispatchers.IO)
+    }.collectAsState(initial = emptyList())
+
+    val deliveries by remember(queries) {
+        queries.selectAllDeliveries { taskId, _, quantity, originId, destinationId, _, _, assignedDriverId, status, _ ->
+            DeliveryUi(
+                taskId = taskId,
+                quantity = quantity,
+                originId = originId,
+                destinationId = destinationId,
+                status = status,
+                assignedDriverId = assignedDriverId,
+            )
+        }.asFlow().mapToList(Dispatchers.IO)
+    }.collectAsState(initial = emptyList())
+
+    val routes by remember(queries) {
+        queries.selectAllRoutes { routeId, _, _, vehicle, _, reasonCode, _ ->
+            RouteUi(routeId = routeId, vehicle = vehicle, reasonCode = reasonCode)
+        }.asFlow().mapToList(Dispatchers.IO)
+    }.collectAsState(initial = emptyList())
+
+    val receipts by remember(queries) {
+        queries.selectAllReceipts { receiptId, deliveryId, _, _, _, _, _, _, verified, _ ->
+            ReceiptUi(receiptId = receiptId, deliveryId = deliveryId, verified = verified)
+        }.asFlow().mapToList(Dispatchers.IO)
+    }.collectAsState(initial = emptyList())
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(text = title, fontWeight = FontWeight.Bold)
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Text(
-                text = description,
-                modifier = Modifier.padding(16.dp),
-            )
-        }
+        Text("Mission Overview", fontWeight = FontWeight.Bold)
+
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(
-                    imageVector = Icons.Filled.CheckCircle,
-                    contentDescription = "Ready status",
-                )
-                Text(text = statusMessage)
+                Text("Profiles: ${users.size}")
+                Text("Deliveries: ${deliveries.size}")
+                Text("Routes: ${routes.size}")
+                Text("PoD Records: ${receipts.size}")
+            }
+        }
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Team Profile", fontWeight = FontWeight.Bold)
+                val user = users.firstOrNull()
+                if (user == null) {
+                    Text("No local profile yet. Add a profile to enable offline role-based actions.")
+                    Button(onClick = { insertDemoUser(queries) }) {
+                        Text("Add Demo Profile")
+                    }
+                } else {
+                    Text("${user.displayName} (${user.role})")
+                    Text(if (user.active) "Status: Active" else "Status: Inactive")
+                }
             }
         }
     }
 }
+
+@Composable
+private fun DeliveriesScreen(database: Database) {
+    val queries = database.localQueries
+    var selectedDeliveryId by rememberSaveable { mutableStateOf<String?>(null) }
+
+    val deliveries by remember(queries) {
+        queries.selectAllDeliveries { taskId, supplyId, quantity, originId, destinationId, priority, deadlineTimestamp, assignedDriverId, status, updatedAt ->
+            DeliveryFullUi(
+                taskId = taskId,
+                supplyId = supplyId,
+                quantity = quantity,
+                originId = originId,
+                destinationId = destinationId,
+                priority = priority,
+                deadlineTimestamp = deadlineTimestamp,
+                assignedDriverId = assignedDriverId,
+                status = status,
+                updatedAt = updatedAt,
+            )
+        }.asFlow().mapToList(Dispatchers.IO)
+    }.collectAsState(initial = emptyList())
+
+    val selected = deliveries.firstOrNull { it.taskId == selectedDeliveryId }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("Deliveries", fontWeight = FontWeight.Bold)
+        Button(onClick = { insertDemoDelivery(queries) }) {
+            Text("Create Delivery")
+        }
+
+        if (selected != null) {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Selected Delivery", fontWeight = FontWeight.Bold)
+                    Text("Task: ${selected.taskId}")
+                    Text("From ${selected.originId} to ${selected.destinationId}")
+                    Text("Quantity: ${selected.quantity}, Priority: ${selected.priority}")
+                    Text("Status: ${selected.status}")
+                }
+            }
+        }
+
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(deliveries, key = { it.taskId }) { delivery ->
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("${delivery.taskId} • ${delivery.status}", fontWeight = FontWeight.Bold)
+                        Text("${delivery.originId} -> ${delivery.destinationId}")
+                        Text("Qty ${delivery.quantity}, Priority ${delivery.priority}")
+                        Button(onClick = { selectedDeliveryId = delivery.taskId }) {
+                            Text("View Details")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RoutesScreen(database: Database) {
+    val queries = database.localQueries
+
+    val routes by remember(queries) {
+        queries.selectAllRoutes { routeId, edgeIdsJson, totalDurationMins, vehicle, etaTimestamp, reasonCode, _ ->
+            RouteFullUi(
+                routeId = routeId,
+                edgeIds = edgeIdsJson,
+                totalDurationMins = totalDurationMins,
+                vehicle = vehicle,
+                etaTimestamp = etaTimestamp,
+                reasonCode = reasonCode,
+            )
+        }.asFlow().mapToList(Dispatchers.IO)
+    }.collectAsState(initial = emptyList())
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("Routes", fontWeight = FontWeight.Bold)
+        Button(onClick = { insertDemoRoute(queries) }) {
+            Text("Create Route")
+        }
+
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(routes, key = { it.routeId }) { route ->
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("${route.routeId} • ${route.vehicle}", fontWeight = FontWeight.Bold)
+                        Text("ETA: ${route.etaTimestamp}")
+                        Text("Duration: ${route.totalDurationMins} mins")
+                        Text("Reason: ${route.reasonCode}")
+                        Text("Edges: ${route.edgeIds}")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PodScreen(database: Database) {
+    val queries = database.localQueries
+
+    val receipts by remember(queries) {
+        queries.selectAllReceipts { receiptId, deliveryId, senderUserId, recipientUserId, _, nonce, _, _, verified, verifiedAt ->
+            ReceiptFullUi(
+                receiptId = receiptId,
+                deliveryId = deliveryId,
+                senderUserId = senderUserId,
+                recipientUserId = recipientUserId,
+                nonce = nonce,
+                verified = verified,
+                verifiedAt = verifiedAt,
+            )
+        }.asFlow().mapToList(Dispatchers.IO)
+    }.collectAsState(initial = emptyList())
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("Proof of Delivery", fontWeight = FontWeight.Bold)
+        Button(onClick = { insertDemoReceipt(queries) }) {
+            Text("Create Receipt")
+        }
+
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(receipts, key = { it.receiptId }) { receipt ->
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("${receipt.receiptId} • Delivery ${receipt.deliveryId}", fontWeight = FontWeight.Bold)
+                        Text("Sender: ${receipt.senderUserId} -> Recipient: ${receipt.recipientUserId}")
+                        Text("Nonce: ${receipt.nonce}")
+                        Text(if (receipt.verified) "Verification: Accepted" else "Verification: Pending")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SyncStatusScreen(database: Database) {
+    val queries = database.localQueries
+
+    val pendingMutations by remember(queries) {
+        queries.selectPendingMutations { mutationId, entityType, entityId, operationType, _, _, deviceId, mutationTimestamp, _ ->
+            MutationUi(
+                mutationId = mutationId,
+                entityType = entityType,
+                entityId = entityId,
+                operationType = operationType,
+                deviceId = deviceId,
+                mutationTimestamp = mutationTimestamp,
+            )
+        }.asFlow().mapToList(Dispatchers.IO)
+    }.collectAsState(initial = emptyList())
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("Sync Status", fontWeight = FontWeight.Bold)
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Pending Changes: ${pendingMutations.size}")
+                Text("Connection: Ready when peer/server is reachable")
+            }
+        }
+
+        HorizontalDivider()
+
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(pendingMutations, key = { it.mutationId }) { mutation ->
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("${mutation.operationType} ${mutation.entityType}", fontWeight = FontWeight.Bold)
+                        Text("Entity: ${mutation.entityId}")
+                        Text("Device: ${mutation.deviceId}")
+                        Text("Queued at: ${mutation.mutationTimestamp}")
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun insertDemoUser(queries: LocalQueries) {
+    val now = System.currentTimeMillis()
+    val userId = "user-${UUID.randomUUID().toString().take(8)}"
+    queries.upsertUser(
+        user_id = userId,
+        display_name = "Field Volunteer",
+        role = "FIELD_VOLUNTEER",
+        public_key = "pk_demo_$userId",
+        active = true,
+        created_at = now,
+        updated_at = now,
+    )
+    appendMutation(queries, entityType = "user", entityId = userId, operationType = "UPSERT")
+}
+
+private fun insertDemoDelivery(queries: LocalQueries) {
+    val now = System.currentTimeMillis()
+    val deliveryId = "task-${UUID.randomUUID().toString().take(8)}"
+    queries.upsertDelivery(
+        task_id = deliveryId,
+        supply_id = "medical-kit-a",
+        quantity = 25,
+        origin_id = "warehouse-01",
+        destination_id = "camp-03",
+        priority = "P1_HIGH",
+        deadline_timestamp = now + 3_600_000,
+        assigned_driver_id = "driver-07",
+        status = "PENDING",
+        updated_at = now,
+    )
+    appendMutation(queries, entityType = "delivery", entityId = deliveryId, operationType = "UPSERT")
+}
+
+private fun insertDemoRoute(queries: LocalQueries) {
+    val now = System.currentTimeMillis()
+    val routeId = "route-${UUID.randomUUID().toString().take(8)}"
+    queries.upsertRoute(
+        route_id = routeId,
+        edge_ids_json = "edge-1,edge-2,edge-9",
+        total_duration_mins = 42,
+        vehicle = "TRUCK",
+        eta_timestamp = now + 2_520_000,
+        reason_code = "NORMAL_FLOW",
+        updated_at = now,
+    )
+    appendMutation(queries, entityType = "route", entityId = routeId, operationType = "UPSERT")
+}
+
+private fun insertDemoReceipt(queries: LocalQueries) {
+    val now = System.currentTimeMillis()
+    val receiptId = "receipt-${UUID.randomUUID().toString().take(8)}"
+    queries.upsertReceipt(
+        receipt_id = receiptId,
+        delivery_id = "task-demo",
+        sender_user_id = "sender-01",
+        recipient_user_id = "recipient-02",
+        payload_hash = "hash_demo_$receiptId",
+        nonce = now,
+        sender_signature = "sig_sender_$receiptId",
+        recipient_signature = "sig_recipient_$receiptId",
+        verified = true,
+        verified_at = now,
+    )
+    appendMutation(queries, entityType = "receipt", entityId = receiptId, operationType = "UPSERT")
+}
+
+private fun appendMutation(
+    queries: LocalQueries,
+    entityType: String,
+    entityId: String,
+    operationType: String,
+) {
+    queries.insertMutation(
+        mutation_id = "mut-${UUID.randomUUID().toString().take(12)}",
+        entity_type = entityType,
+        entity_id = entityId,
+        operation_type = operationType,
+        changed_fields_json = "{}",
+        actor_id = "ui_user",
+        device_id = "android_client",
+        mutation_timestamp = System.currentTimeMillis(),
+        synced = false,
+    )
+}
+
+private data class UserUi(
+    val userId: String,
+    val displayName: String,
+    val role: String,
+    val active: Boolean,
+)
+
+private data class DeliveryUi(
+    val taskId: String,
+    val quantity: Long,
+    val originId: String,
+    val destinationId: String,
+    val status: String,
+    val assignedDriverId: String?,
+)
+
+private data class DeliveryFullUi(
+    val taskId: String,
+    val supplyId: String,
+    val quantity: Long,
+    val originId: String,
+    val destinationId: String,
+    val priority: String,
+    val deadlineTimestamp: Long,
+    val assignedDriverId: String?,
+    val status: String,
+    val updatedAt: Long,
+)
+
+private data class RouteUi(
+    val routeId: String,
+    val vehicle: String,
+    val reasonCode: String,
+)
+
+private data class RouteFullUi(
+    val routeId: String,
+    val edgeIds: String,
+    val totalDurationMins: Long,
+    val vehicle: String,
+    val etaTimestamp: Long,
+    val reasonCode: String,
+)
+
+private data class ReceiptUi(
+    val receiptId: String,
+    val deliveryId: String,
+    val verified: Boolean,
+)
+
+private data class ReceiptFullUi(
+    val receiptId: String,
+    val deliveryId: String,
+    val senderUserId: String,
+    val recipientUserId: String,
+    val nonce: Long,
+    val verified: Boolean,
+    val verifiedAt: Long?,
+)
+
+private data class MutationUi(
+    val mutationId: String,
+    val entityType: String,
+    val entityId: String,
+    val operationType: String,
+    val deviceId: String,
+    val mutationTimestamp: Long,
+)
