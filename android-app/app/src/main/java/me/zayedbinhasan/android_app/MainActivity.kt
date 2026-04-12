@@ -1,9 +1,5 @@
 package me.zayedbinhasan.android_app
 
-import app.cash.sqldelight.coroutines.asFlow
-import app.cash.sqldelight.coroutines.mapToList
-import app.cash.sqldelight.coroutines.mapToOne
-import app.cash.sqldelight.coroutines.mapToOneOrNull
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -13,6 +9,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -24,25 +22,29 @@ import androidx.compose.material.icons.filled.ReportProblem
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -51,12 +53,12 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import java.util.UUID
-import kotlinx.coroutines.Dispatchers
+import me.zayedbinhasan.android_app.auth.OfflineAuthManager
+import me.zayedbinhasan.android_app.auth.OfflineAuthSession
 import me.zayedbinhasan.android_app.data.local.db.LocalDatabaseFactory
 import me.zayedbinhasan.android_app.data.local.repository.LocalRepository
-import me.zayedbinhasan.data.Database
 import me.zayedbinhasan.android_app.ui.theme.AndroidappTheme
+import java.util.UUID
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -73,16 +75,45 @@ fun DigitalDeltaApp() {
     AndroidappTheme {
         val context = LocalContext.current
         val database = remember { LocalDatabaseFactory.create(context.applicationContext) }
-        var isAuthenticated by rememberSaveable { mutableStateOf(false) }
+        val repository = remember(database) { LocalRepository(database.localQueries) }
+        val authManager = remember(repository) {
+            OfflineAuthManager(context.applicationContext, repository)
+        }
+        val restoredSession = remember(authManager) { authManager.restoreActiveSession() }
 
-        if (isAuthenticated) {
+        var activeUserId by rememberSaveable { mutableStateOf(restoredSession?.userId) }
+        var activeRole by rememberSaveable { mutableStateOf(restoredSession?.role) }
+        var activeAuthMode by rememberSaveable { mutableStateOf(restoredSession?.authMode ?: "SIGNED_OUT") }
+
+        val activeSession = if (activeUserId != null && activeRole != null) {
+            OfflineAuthSession(
+                userId = activeUserId!!,
+                role = activeRole!!,
+                authMode = activeAuthMode,
+            )
+        } else {
+            null
+        }
+
+        if (activeSession != null) {
             AuthenticatedShell(
-                database = database,
-                onLogout = { isAuthenticated = false },
+                repository = repository,
+                session = activeSession,
+                onLogout = {
+                    authManager.clearActiveSession()
+                    activeUserId = null
+                    activeRole = null
+                    activeAuthMode = "SIGNED_OUT"
+                },
             )
         } else {
             LoginScreen(
-                onLoginClick = { isAuthenticated = true },
+                authManager = authManager,
+                onLoginSuccess = { session ->
+                    activeUserId = session.userId
+                    activeRole = session.role
+                    activeAuthMode = session.authMode
+                },
             )
         }
     }
@@ -117,16 +148,46 @@ private val appDestinations = listOf(
     AppDestination(route = AppRoutes.ROUTE, title = "Route", icon = Icons.Filled.Directions),
     AppDestination(route = AppRoutes.POD, title = "PoD", icon = Icons.Filled.QrCodeScanner),
     AppDestination(route = AppRoutes.SYNC_STATUS, title = "Sync Status", icon = Icons.Filled.Sync),
-    AppDestination(route = AppRoutes.CONFLICTS, title = "Conflicts", icon = Icons.Filled.ReportProblem),
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun LoginScreen(onLoginClick: () -> Unit) {
+private fun LoginScreen(
+    authManager: OfflineAuthManager,
+    onLoginSuccess: (OfflineAuthSession) -> Unit,
+) {
+    var identifierInput by rememberSaveable { mutableStateOf("") }
+    var otpInput by rememberSaveable { mutableStateOf("") }
+    var cachedIdentityUserId by rememberSaveable { mutableStateOf(authManager.cachedIdentity()?.userId ?: "") }
+    var cachedIdentityRole by rememberSaveable { mutableStateOf(authManager.cachedIdentity()?.role ?: "") }
+    var cachedIdentityPublicKey by rememberSaveable { mutableStateOf(authManager.cachedIdentity()?.publicKey ?: "") }
+    var otpPreview by rememberSaveable { mutableStateOf(authManager.generateCurrentOtp()?.code ?: "") }
+    var otpExpiresIn by rememberSaveable { mutableLongStateOf(authManager.generateCurrentOtp()?.expiresInSeconds ?: 0L) }
+    var offlineAuthState by rememberSaveable {
+        mutableStateOf(if (cachedIdentityUserId.isNotEmpty()) "IDENTITY_CACHED" else "NO_IDENTITY")
+    }
+    var sessionStatus by rememberSaveable {
+        mutableStateOf(if (authManager.restoreActiveSession() != null) "SESSION_AVAILABLE" else "SIGNED_OUT")
+    }
+
+    LaunchedEffect(Unit) {
+        val cached = authManager.cachedIdentity()
+        cachedIdentityUserId = cached?.userId ?: ""
+        cachedIdentityRole = cached?.role ?: ""
+        cachedIdentityPublicKey = cached?.publicKey ?: ""
+
+        val otp = authManager.generateCurrentOtp()
+        otpPreview = otp?.code ?: ""
+        otpExpiresIn = otp?.expiresInSeconds ?: 0L
+
+        offlineAuthState = if (cached != null) "IDENTITY_CACHED" else "NO_IDENTITY"
+        sessionStatus = if (authManager.restoreActiveSession() != null) "SESSION_AVAILABLE" else "SIGNED_OUT"
+    }
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
-            CenterAlignedTopAppBar(
+            TopAppBar(
                 title = { Text("Digital Delta Login") },
             )
         },
@@ -135,18 +196,139 @@ private fun LoginScreen(onLoginClick: () -> Unit) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
-            horizontalAlignment = Alignment.CenterHorizontally,
+                .padding(20.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            horizontalAlignment = Alignment.Start,
         ) {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Welcome to Digital Delta", fontWeight = FontWeight.Bold)
-                    Text("Sign in to view delivery status, routing updates, proof-of-delivery records, and sync health.")
+                    Text("Provision once, then re-login offline with local OTP and cached role.")
+                    Text("Offline Auth State: $offlineAuthState")
+                    Text("Session Status: $sessionStatus")
+                    if (cachedIdentityRole.isNotEmpty()) {
+                        Text("Role Badge: $cachedIdentityRole", fontWeight = FontWeight.Bold)
+                    }
                 }
             }
-            Button(onClick = onLoginClick) {
-                Text("Continue")
+
+            OutlinedTextField(
+                value = identifierInput,
+                onValueChange = { identifierInput = it },
+                label = { Text("User ID") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+
+            OutlinedTextField(
+                value = otpInput,
+                onValueChange = { otpInput = it.filter { c -> c.isDigit() }.take(6) },
+                label = { Text("TOTP (6 digits)") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+
+            if (otpPreview.isNotEmpty()) {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Local OTP Preview: $otpPreview")
+                        Text("Expires In: ${otpExpiresIn}s")
+                        if (cachedIdentityPublicKey.isNotEmpty()) {
+                            Text("Device Public Key (cached): ${cachedIdentityPublicKey.take(24)}...")
+                        }
+                    }
+                }
+            }
+
+            Button(
+                onClick = {
+                    val userId = identifierInput.ifEmpty { cachedIdentityUserId.ifEmpty { "field-volunteer" } }
+                    val identity = authManager.provisionIdentity(
+                        userId = userId,
+                        role = if (cachedIdentityRole.isNotEmpty()) cachedIdentityRole else "FIELD_VOLUNTEER",
+                    )
+                    if (identity != null) {
+                        cachedIdentityUserId = identity.userId
+                        cachedIdentityRole = identity.role
+                        cachedIdentityPublicKey = identity.publicKey
+                        identifierInput = identity.userId
+                        val otp = authManager.generateCurrentOtp()
+                        otpPreview = otp?.code ?: ""
+                        otpExpiresIn = otp?.expiresInSeconds ?: 0L
+                        offlineAuthState = "OTP_REQUIRED"
+                        sessionStatus = "PROVISIONED"
+                    } else {
+                        offlineAuthState = "PROVISION_FAILED"
+                        sessionStatus = "KEYSTORE_OR_STORAGE_ERROR"
+                    }
+                },
+            ) {
+                Text("Provision Identity (Offline Ready)")
+            }
+
+            Button(
+                onClick = {
+                    val otp = authManager.generateCurrentOtp()
+                    otpPreview = otp?.code ?: ""
+                    otpExpiresIn = otp?.expiresInSeconds ?: 0L
+                    if (otp != null) {
+                        offlineAuthState = "OTP_REQUIRED"
+                        sessionStatus = "OTP_REFRESHED"
+                    } else {
+                        offlineAuthState = "NO_IDENTITY"
+                        sessionStatus = "OTP_NOT_AVAILABLE"
+                    }
+                },
+                enabled = cachedIdentityUserId.isNotEmpty(),
+            ) {
+                Text("Regenerate Local OTP")
+            }
+
+            Button(
+                onClick = {
+                    if (otpPreview.length == 6) {
+                        otpInput = otpPreview
+                        sessionStatus = "OTP_APPLIED"
+                    }
+                },
+                enabled = otpPreview.length == 6,
+            ) {
+                Text("Use OTP Preview")
+            }
+
+            Button(
+                onClick = {
+                    val candidateOtp = otpInput.ifEmpty { otpPreview }
+                    val session = authManager.loginOffline(
+                        userId = identifierInput.ifEmpty { cachedIdentityUserId },
+                        otp = candidateOtp,
+                    )
+                    if (session != null) {
+                        onLoginSuccess(session)
+                    } else {
+                        offlineAuthState = "AUTH_FAILED"
+                        sessionStatus = "OTP_OR_IDENTITY_INVALID"
+                    }
+                },
+                enabled = cachedIdentityUserId.isNotEmpty() && (otpInput.length == 6 || otpPreview.length == 6),
+            ) {
+                Text("Login Offline")
+            }
+
+            Button(
+                onClick = {
+                    val session = authManager.restoreActiveSession()
+                    if (session != null) {
+                        onLoginSuccess(session)
+                    } else {
+                        offlineAuthState = "NO_ACTIVE_SESSION"
+                        sessionStatus = "NO_ACTIVE_SESSION"
+                    }
+                },
+                enabled = authManager.restoreActiveSession() != null,
+            ) {
+                Text("Continue Cached Session")
             }
         }
     }
@@ -154,27 +336,38 @@ private fun LoginScreen(onLoginClick: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AuthenticatedShell(database: Database, onLogout: () -> Unit) {
+private fun AuthenticatedShell(
+    repository: LocalRepository,
+    session: OfflineAuthSession,
+    onLogout: () -> Unit,
+) {
     val navController = rememberNavController()
-    val repository = remember(database) { LocalRepository(database.localQueries) }
     val openConflictCount by remember(repository) {
         repository.observeOpenConflictCount()
     }.collectAsState(initial = 0L)
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route ?: appDestinations.first().route
-    val currentTitle = appDestinations.firstOrNull { it.route == currentRoute }?.title ?: "Digital Delta"
+    val currentTitle = when (currentRoute) {
+        AppRoutes.CONFLICTS -> "Conflicts"
+        else -> appDestinations.firstOrNull { it.route == currentRoute }?.title ?: "Digital Delta"
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
-            CenterAlignedTopAppBar(
+            TopAppBar(
                 title = { Text(currentTitle) },
                 actions = {
-                    if (openConflictCount > 0) {
-                        Text(
-                            text = "Conflicts: $openConflictCount",
-                            modifier = Modifier.padding(end = 8.dp),
-                            fontWeight = FontWeight.Bold,
+                    IconButton(
+                        onClick = {
+                            navController.navigate(AppRoutes.CONFLICTS) {
+                                launchSingleTop = true
+                            }
+                        },
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.ReportProblem,
+                            contentDescription = "Open conflicts",
                         )
                     }
                     Button(onClick = onLogout, modifier = Modifier.padding(end = 8.dp)) {
@@ -187,15 +380,28 @@ private fun AuthenticatedShell(database: Database, onLogout: () -> Unit) {
             BottomNavigationBar(
                 navController = navController,
                 currentRoute = currentRoute,
-                openConflictCount = openConflictCount,
             )
         },
     ) { innerPadding ->
-        AppNavHost(
-            repository = repository,
-            navController = navController,
-            modifier = Modifier.padding(innerPadding),
-        )
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SessionStatusHeader(
+                role = session.role,
+                authMode = session.authMode,
+                openConflictCount = openConflictCount,
+            )
+            AppNavHost(
+                repository = repository,
+                navController = navController,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+            )
+        }
     }
 }
 
@@ -203,7 +409,6 @@ private fun AuthenticatedShell(database: Database, onLogout: () -> Unit) {
 private fun BottomNavigationBar(
     navController: NavHostController,
     currentRoute: String,
-    openConflictCount: Long,
 ) {
     NavigationBar {
         appDestinations.forEach { destination ->
@@ -218,14 +423,7 @@ private fun BottomNavigationBar(
                         restoreState = true
                     }
                 },
-                label = {
-                    val label = if (destination.route == AppRoutes.CONFLICTS && openConflictCount > 0) {
-                        "${destination.title} (${openConflictCount})"
-                    } else {
-                        destination.title
-                    }
-                    Text(label)
-                },
+                label = { Text(destination.title) },
                 icon = {
                     Icon(
                         imageVector = destination.icon,
@@ -233,6 +431,25 @@ private fun BottomNavigationBar(
                     )
                 },
             )
+        }
+    }
+}
+
+@Composable
+private fun SessionStatusHeader(
+    role: String,
+    authMode: String,
+    openConflictCount: Long,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp),
+    ) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Role: ${role.replace('_', ' ')}", fontWeight = FontWeight.Bold)
+            Text("Auth: ${authMode.replace('_', ' ')}")
+            Text("Open conflicts: $openConflictCount")
         }
     }
 }
@@ -585,7 +802,6 @@ private fun SyncStatusScreen(repository: LocalRepository) {
                     onClick = {
                         simulateSyncWithPeer(
                             repository = repository,
-                            peerId = peerId,
                             appliedMutationCount = unseenForPeer.size,
                         )
                     },
@@ -870,37 +1086,31 @@ private fun simulateRemoteOwnershipConflict(repository: LocalRepository) {
 
     createConflict(
         repository = repository,
-        entityType = "delivery",
         entityId = delivery.task_id,
-        fieldName = "assigned_driver_id",
         localValue = localAssignee,
         remoteValue = remoteAssignee,
         mergeStrategy = "MANUAL_OWNERSHIP",
-        manualRequired = true,
     )
 }
 
 private fun createConflict(
     repository: LocalRepository,
-    entityType: String,
     entityId: String,
-    fieldName: String,
     localValue: String?,
     remoteValue: String?,
     mergeStrategy: String,
-    manualRequired: Boolean,
 ) {
     val now = System.currentTimeMillis()
     val conflictId = "conf-${UUID.randomUUID().toString().take(12)}"
     repository.insertConflict(
         conflictId = conflictId,
-        entityType = entityType,
+        entityType = "delivery",
         entityId = entityId,
-        fieldName = fieldName,
+        fieldName = "assigned_driver_id",
         localValue = localValue,
         remoteValue = remoteValue,
         mergeStrategy = mergeStrategy,
-        manualRequired = manualRequired,
+        manualRequired = true,
         status = "OPEN",
         createdAt = now,
         resolvedAt = null,
@@ -962,9 +1172,9 @@ private fun resolveConflictAction(
 
 private fun simulateSyncWithPeer(
     repository: LocalRepository,
-    peerId: String,
     appliedMutationCount: Int,
 ) {
+    val peerId = DEFAULT_SYNC_PEER_ID
     val now = System.currentTimeMillis()
     val existingCheckpoint = repository.syncCheckpointByPeer(peerId)
     val latestMutationTimestamp = repository.latestMutationTimestampNow() ?: now
@@ -1053,13 +1263,10 @@ private fun applyIncomingMutations(repository: LocalRepository, incoming: List<I
                 } else {
                     createConflict(
                         repository = repository,
-                        entityType = "delivery",
                         entityId = local.task_id,
-                        fieldName = "assigned_driver_id",
                         localValue = localAssignee,
                         remoteValue = mutation.remoteValue,
                         mergeStrategy = mutation.mergeStrategy,
-                        manualRequired = true,
                     )
                 }
             }

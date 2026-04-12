@@ -26,6 +26,9 @@ class LocalRepository(
     fun observeUsers(): Flow<List<Users>> =
         queries.selectAllUsers().asFlow().mapToList(ioDispatcher)
 
+    fun userById(userId: String): Users? =
+        queries.selectUserById(userId).executeAsOneOrNull()
+
     fun observeDeliveries(): Flow<List<Deliveries>> =
         queries.selectAllDeliveries().asFlow().mapToList(ioDispatcher)
 
