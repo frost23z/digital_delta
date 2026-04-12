@@ -217,3 +217,8 @@ markMutationSynced:
 UPDATE mutation_logs
 SET synced = 1
 WHERE mutation_id = ?;
+
+markAllMutationsSynced:
+UPDATE mutation_logs
+SET synced = 1
+WHERE synced = 0;

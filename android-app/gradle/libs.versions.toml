@@ -9,6 +9,9 @@ activityCompose = "1.13.0"
 kotlin = "2.3.20"
 composeBom = "2026.03.01"
 sqldelight = "2.3.2"
+grpcJava = "1.63.0"
+protobufJava = "3.25.3"
+protobufPlugin = "0.9.5"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -27,9 +30,15 @@ androidx-compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-te
 androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
 sqldelight-android-driver = { group = "app.cash.sqldelight", name = "android-driver", version.ref = "sqldelight" }
 sqldelight-coroutines-extensions = { group = "app.cash.sqldelight", name = "coroutines-extensions", version.ref = "sqldelight" }
+grpc-okhttp = { group = "io.grpc", name = "grpc-okhttp", version.ref = "grpcJava" }
+grpc-protobuf-lite = { group = "io.grpc", name = "grpc-protobuf-lite", version.ref = "grpcJava" }
+grpc-stub = { group = "io.grpc", name = "grpc-stub", version.ref = "grpcJava" }
+protobuf-javalite = { group = "com.google.protobuf", name = "protobuf-javalite", version.ref = "protobufJava" }
+javax-annotation-api = { group = "javax.annotation", name = "javax.annotation-api", version = "1.3.2" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 sqldelight = { id = "app.cash.sqldelight", version.ref="sqldelight"}
+protobuf = { id = "com.google.protobuf", version.ref = "protobufPlugin" }
 
