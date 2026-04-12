@@ -43,7 +43,7 @@ CREATE TABLE receipts (
   sender_signature TEXT NOT NULL,
   recipient_signature TEXT NOT NULL,
   verified INTEGER AS Boolean NOT NULL DEFAULT 0,
-  verified_at INTEGER NOT NULL
+  verified_at INTEGER
 );
 
 CREATE UNIQUE INDEX receipts_nonce_idx ON receipts(nonce);
@@ -142,6 +142,11 @@ INSERT OR REPLACE INTO routes(
 )
 VALUES (?, ?, ?, ?, ?, ?, ?);
 
+CREATE INDEX IF NOT EXISTS receipts_verified_at_idx
+ON receipts(verified_at);
+CREATE INDEX IF NOT EXISTS audit_events_event_timestamp_idx
+ON audit_events(event_timestamp);
+
 selectAllReceipts:
 SELECT *
 FROM receipts
@@ -166,6 +171,9 @@ INSERT OR REPLACE INTO receipts(
   verified_at
 )
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+CREATE INDEX IF NOT EXISTS audit_events_event_timestamp_idx
+ON audit_events(event_timestamp);
 
 selectAllAuditEvents:
 SELECT *
