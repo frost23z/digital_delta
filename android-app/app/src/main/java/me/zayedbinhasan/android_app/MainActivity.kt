@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.ReportProblem
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -60,11 +61,17 @@ import me.zayedbinhasan.android_app.data.local.db.LocalDatabaseFactory
 import me.zayedbinhasan.android_app.data.local.repository.LocalRepository
 import me.zayedbinhasan.android_app.ui.theme.AndroidappTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
+import java.net.InetSocketAddress
+import java.net.ServerSocket
+import java.net.Socket
+import java.net.SocketTimeoutException
 import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.util.UUID
@@ -151,6 +158,7 @@ private object AppRoutes {
 
 private const val DEFAULT_SYNC_PEER_ID = "sync-server-main"
 private const val DEFAULT_SYNC_HTTP_BASE_URL = "http://10.0.2.2:8081"
+private const val DEFAULT_LOCAL_NODE_ID = "android_client"
 
 private val appDestinations = listOf(
     AppDestination(route = AppRoutes.DASHBOARD, title = "Dashboard", icon = Icons.Filled.Dashboard),
@@ -746,11 +754,18 @@ private fun PodScreen(repository: LocalRepository) {
 private fun SyncStatusScreen(repository: LocalRepository) {
     val peerId = DEFAULT_SYNC_PEER_ID
     val syncServerBaseUrl = DEFAULT_SYNC_HTTP_BASE_URL
+    val localNodeId = DEFAULT_LOCAL_NODE_ID
     val coroutineScope = rememberCoroutineScope()
 
     var syncInProgress by rememberSaveable { mutableStateOf(false) }
     var syncMessage by rememberSaveable { mutableStateOf("Idle") }
     var lastServerSyncAt by rememberSaveable { mutableStateOf<Long?>(null) }
+    var peerSyncMessage by rememberSaveable { mutableStateOf("Idle") }
+    var lastPeerSyncAt by rememberSaveable { mutableStateOf<Long?>(null) }
+    var peerHostInput by rememberSaveable { mutableStateOf("") }
+    var peerPortInput by rememberSaveable { mutableStateOf("9099") }
+    var listenPortInput by rememberSaveable { mutableStateOf("9099") }
+    var peerTransferStatuses by remember { mutableStateOf(emptyList<PeerTransferStatus>()) }
 
     val pendingMutationsRaw by remember(repository) {
         repository.observePendingMutations()
@@ -829,7 +844,7 @@ private fun SyncStatusScreen(repository: LocalRepository) {
                             val serverResult = withContext(Dispatchers.IO) {
                                 performServerDeltaSync(
                                     baseUrl = syncServerBaseUrl,
-                                    nodeId = "android_client",
+                                    nodeId = localNodeId,
                                     checkpointCounter = activePeerCheckpoint?.lastSeenCounter ?: 0L,
                                     outgoingMutations = pendingMutationsRaw,
                                 )
@@ -871,6 +886,152 @@ private fun SyncStatusScreen(repository: LocalRepository) {
                     enabled = !syncInProgress,
                 ) {
                     Text(if (syncInProgress) "Syncing..." else "Sync Now (Server)")
+                }
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                Text("Peer Sync State: $peerSyncMessage")
+                Text("Last Peer Sync: ${lastPeerSyncAt ?: "Never"}")
+                Text("Transport Mode: Direct LAN TCP (device-to-device, no central server)")
+                OutlinedTextField(
+                    value = peerHostInput,
+                    onValueChange = { peerHostInput = it },
+                    label = { Text("Peer Host (LAN IP)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = peerPortInput,
+                    onValueChange = { peerPortInput = it },
+                    label = { Text("Peer Port") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = listenPortInput,
+                    onValueChange = { listenPortInput = it },
+                    label = { Text("Listen Port") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                Button(
+                    onClick = {
+                        if (syncInProgress) {
+                            return@Button
+                        }
+
+                        val peerPort = peerPortInput.toIntOrNull()
+                        if (peerHostInput.isBlank() || peerPort == null) {
+                            peerSyncMessage = "PEER_SYNC_CONFIG_INVALID"
+                            return@Button
+                        }
+
+                        syncInProgress = true
+                        peerSyncMessage = "PEER_SYNCING"
+
+                        coroutineScope.launch {
+                            val peerResult = withContext(Dispatchers.Default) {
+                                performPeerDeltaSyncLan(
+                                    host = peerHostInput,
+                                    port = peerPort,
+                                    nodeId = localNodeId,
+                                    checkpointCounter = activePeerCheckpoint?.lastSeenCounter ?: 0L,
+                                    outgoingMutations = pendingMutationsRaw,
+                                )
+                            }
+
+                            peerTransferStatuses = peerResult.transferStatuses
+
+                            if (peerResult.incomingMutations.isNotEmpty()) {
+                                applyIncomingMutations(repository, peerResult.incomingMutations)
+                            }
+
+                            if (peerResult.syncedMutationIds.isNotEmpty()) {
+                                repository.markAllMutationsSynced()
+                            }
+
+                            val now = System.currentTimeMillis()
+                            if (peerResult.transferStatuses.any { it.success }) {
+                                val checkpointCounter = activePeerCheckpoint?.lastSeenCounter ?: 0L
+                                repository.upsertSyncCheckpoint(
+                                    peerId = peerId,
+                                    lastSeenCounter = checkpointCounter + peerResult.syncedMutationIds.size,
+                                    lastSyncTimestamp = now,
+                                    updatedAt = now,
+                                )
+                                appendMutation(repository, entityType = "sync_checkpoint", entityId = peerId, operationType = "UPSERT")
+                                peerSyncMessage = "PEER_SYNC_OK"
+                            } else {
+                                peerSyncMessage = "PEER_SYNC_FAILED"
+                            }
+
+                            lastPeerSyncAt = now
+                            syncInProgress = false
+                        }
+                    },
+                    enabled = !syncInProgress,
+                ) {
+                    Text(if (syncInProgress) "Syncing..." else "Peer Sync Now (LAN)")
+                }
+
+                Button(
+                    onClick = {
+                        if (syncInProgress) {
+                            return@Button
+                        }
+                        val listenPort = listenPortInput.toIntOrNull()
+                        if (listenPort == null) {
+                            peerSyncMessage = "PEER_LISTENER_PORT_INVALID"
+                            return@Button
+                        }
+
+                        syncInProgress = true
+                        peerSyncMessage = "PEER_LISTENING"
+
+                        coroutineScope.launch {
+                            val receiveStatus = withContext(Dispatchers.IO) {
+                                receivePeerDeltaSyncOnce(
+                                    repository = repository,
+                                    nodeId = localNodeId,
+                                    listenPort = listenPort,
+                                )
+                            }
+
+                            val now = System.currentTimeMillis()
+                            peerTransferStatuses = listOf(receiveStatus) + peerTransferStatuses.take(7)
+                            lastPeerSyncAt = now
+                            peerSyncMessage = if (receiveStatus.success) {
+                                "PEER_RECEIVE_OK"
+                            } else {
+                                "PEER_RECEIVE_FAILED"
+                            }
+                            syncInProgress = false
+                        }
+                    },
+                    enabled = !syncInProgress,
+                ) {
+                    Text(if (syncInProgress) "Listening..." else "Receive Peer Sync Once")
+                }
+
+                if (peerTransferStatuses.isNotEmpty()) {
+                    Text("Peer Transfer Status", fontWeight = FontWeight.Bold)
+                    peerTransferStatuses.forEach { transfer ->
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                AssistChip(
+                                    onClick = {},
+                                    label = {
+                                        Text(
+                                            "${transfer.peerId}: ${if (transfer.success) "SUCCESS" else "FAILED"}",
+                                        )
+                                    },
+                                )
+                                Text("message_id: ${transfer.messageId}")
+                                Text("attempt_count: ${transfer.attemptCount}")
+                                Text("ttl: ${transfer.ttl}")
+                                Text("seen_nodes: ${transfer.seenNodes.joinToString(",")}")
+                                Text("transfer: ${transfer.detail}")
+                            }
+                        }
+                    }
                 }
                 Button(
                     onClick = {
@@ -1355,6 +1516,337 @@ private data class ServerDeltaSyncResult(
     val message: String,
 )
 
+private data class PeerTransferStatus(
+    val peerId: String,
+    val messageId: String,
+    val ttl: Int,
+    val seenNodes: List<String>,
+    val attemptCount: Int,
+    val success: Boolean,
+    val detail: String,
+)
+
+private data class PeerDeltaSyncResult(
+    val transferStatuses: List<PeerTransferStatus>,
+    val syncedMutationIds: List<String>,
+    val incomingMutations: List<IncomingMutation>,
+)
+
+private data class PeerRelayEnvelope(
+    val messageId: String,
+    val ttl: Int,
+    val seenNodes: List<String>,
+    val attemptCount: Int,
+    val payload: JSONObject,
+)
+
+private fun buildDeltaSyncRequestJson(
+    nodeId: String,
+    checkpointCounter: Long,
+    outgoingMutations: List<me.zayedbinhasan.data.Mutation_logs>,
+): JSONObject {
+    return JSONObject().apply {
+        put("node_id", nodeId)
+        put("checkpoint", JSONObject().apply {
+            put(nodeId, checkpointCounter)
+        })
+
+        val outgoingArray = JSONArray()
+        outgoingMutations.forEach { mutation ->
+            val vectorClock = parseLongMap(mutation.vector_clock_json)
+            outgoingArray.put(
+                JSONObject().apply {
+                    put("mutation_id", mutation.mutation_id)
+                    put("entity_type", mutation.entity_type)
+                    put("entity_id", mutation.entity_id)
+                    put("changed_fields_json", mutation.changed_fields_json)
+                    put("actor_id", mutation.actor_id)
+                    put("timestamp", mutation.mutation_timestamp)
+                    put("device_id", mutation.device_id)
+                    put("vector_clock", JSONObject(vectorClock))
+                },
+            )
+        }
+        put("outgoing_mutations", outgoingArray)
+    }
+}
+
+private fun performPeerDeltaSyncLan(
+    host: String,
+    port: Int,
+    nodeId: String,
+    checkpointCounter: Long,
+    outgoingMutations: List<me.zayedbinhasan.data.Mutation_logs>,
+): PeerDeltaSyncResult {
+    val payload = buildDeltaSyncRequestJson(nodeId, checkpointCounter, outgoingMutations)
+    val outgoingCount = payload.optJSONArray("outgoing_mutations")?.length() ?: 0
+
+    val messageId = "peer-msg-${System.currentTimeMillis()}"
+    var ttl = 3
+    var attemptCount = 0
+    val seenNodes = mutableListOf(nodeId)
+    var transferStatus = PeerTransferStatus(
+        peerId = "$host:$port",
+        messageId = messageId,
+        ttl = ttl,
+        seenNodes = seenNodes,
+        attemptCount = attemptCount,
+        success = false,
+        detail = "not attempted",
+    )
+
+    while (attemptCount < 2 && ttl > 0) {
+        attemptCount += 1
+        ttl -= 1
+
+        val result = runCatching {
+            val envelope = JSONObject().apply {
+                put("message_id", messageId)
+                put("ttl", ttl)
+                put("seen_nodes", JSONArray(seenNodes))
+                put("attempt_count", attemptCount)
+                put("payload", payload)
+            }
+
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress(host, port), 4000)
+                socket.soTimeout = 6000
+
+                socket.getOutputStream().bufferedWriter(StandardCharsets.UTF_8).use { writer ->
+                    writer.write(envelope.toString())
+                    writer.write("\n")
+                    writer.flush()
+                }
+
+                socket.getInputStream().bufferedReader(StandardCharsets.UTF_8).use { reader ->
+                    reader.readLine().orEmpty()
+                }
+            }
+        }
+
+        if (result.isSuccess) {
+            val response = JSONObject(result.getOrDefault("{}"))
+            val relay = parsePeerRelayEnvelope(response)
+            val incomingMutations = parseIncomingMutationsArray(relay.payload.optJSONArray("incoming_mutations") ?: JSONArray())
+            val syncedIds = parseStringList(relay.payload.optJSONArray("synced_mutation_ids") ?: JSONArray())
+
+            transferStatus = PeerTransferStatus(
+                peerId = "$host:$port",
+                messageId = messageId,
+                ttl = relay.ttl,
+                seenNodes = relay.seenNodes,
+                attemptCount = relay.attemptCount,
+                success = true,
+                detail = "delivered $outgoingCount mutation payload(s)",
+            )
+
+            return PeerDeltaSyncResult(
+                transferStatuses = listOf(transferStatus),
+                syncedMutationIds = syncedIds,
+                incomingMutations = incomingMutations,
+            )
+        }
+
+        transferStatus = PeerTransferStatus(
+            peerId = "$host:$port",
+            messageId = messageId,
+            ttl = ttl,
+            seenNodes = seenNodes,
+            attemptCount = attemptCount,
+            success = false,
+            detail = result.exceptionOrNull()?.message ?: "connection failed",
+        )
+    }
+
+    return PeerDeltaSyncResult(
+        transferStatuses = listOf(transferStatus),
+        syncedMutationIds = emptyList(),
+        incomingMutations = emptyList(),
+    )
+}
+
+private fun receivePeerDeltaSyncOnce(
+    repository: LocalRepository,
+    nodeId: String,
+    listenPort: Int,
+): PeerTransferStatus {
+    return runCatching {
+        ServerSocket(listenPort).use { serverSocket ->
+            serverSocket.soTimeout = 15_000
+
+            serverSocket.accept().use { socket ->
+                socket.soTimeout = 6_000
+
+                val rawRequest = socket.getInputStream().bufferedReader(StandardCharsets.UTF_8).use { reader ->
+                    reader.readLine().orEmpty()
+                }
+                val requestRelay = parsePeerRelayEnvelope(JSONObject(rawRequest))
+
+                val requesterId = requestRelay.payload.optString("node_id", "peer-client")
+                val outgoingArray = requestRelay.payload.optJSONArray("outgoing_mutations") ?: JSONArray()
+                val incomingForThisDevice = parseIncomingMutationsArray(outgoingArray)
+                if (incomingForThisDevice.isNotEmpty()) {
+                    applyIncomingMutations(repository, incomingForThisDevice)
+                }
+
+                val localPending = runBlocking { repository.observePendingMutations().first() }
+                val responsePayload = JSONObject().apply {
+                    put("message", "peer sync completed")
+                    put("synced_mutation_ids", extractMutationIds(outgoingArray))
+                    put("incoming_mutations", mutationLogsToJsonArray(localPending))
+                    put("updated_checkpoint", JSONObject().apply {
+                        put(nodeId, repository.localDeviceMutationCount(nodeId))
+                    })
+                }
+
+                if (localPending.isNotEmpty()) {
+                    repository.markAllMutationsSynced()
+                }
+
+                val now = System.currentTimeMillis()
+                repository.upsertSyncCheckpoint(
+                    peerId = requesterId,
+                    lastSeenCounter = outgoingArray.length().toLong(),
+                    lastSyncTimestamp = now,
+                    updatedAt = now,
+                )
+                appendMutation(repository, entityType = "sync_checkpoint", entityId = requesterId, operationType = "UPSERT")
+
+                val responseRelay = JSONObject().apply {
+                    put("message_id", "${requestRelay.messageId}-ack")
+                    put("ttl", maxOf(0, requestRelay.ttl - 1))
+                    put("seen_nodes", JSONArray(requestRelay.seenNodes + nodeId))
+                    put("attempt_count", requestRelay.attemptCount + 1)
+                    put("payload", responsePayload)
+                }
+
+                socket.getOutputStream().bufferedWriter(StandardCharsets.UTF_8).use { writer ->
+                    writer.write(responseRelay.toString())
+                    writer.write("\n")
+                    writer.flush()
+                }
+
+                PeerTransferStatus(
+                    peerId = requesterId,
+                    messageId = requestRelay.messageId,
+                    ttl = requestRelay.ttl,
+                    seenNodes = requestRelay.seenNodes,
+                    attemptCount = requestRelay.attemptCount,
+                    success = true,
+                    detail = "received ${outgoingArray.length()} payload(s), responded with ${localPending.size}",
+                )
+            }
+        }
+    }.getOrElse { error ->
+        val message = if (error is SocketTimeoutException) {
+            "listener timeout waiting for peer"
+        } else {
+            error.message ?: "listener failed"
+        }
+
+        PeerTransferStatus(
+            peerId = "listener:$listenPort",
+            messageId = "peer-listen-${System.currentTimeMillis()}",
+            ttl = 0,
+            seenNodes = listOf(nodeId),
+            attemptCount = 1,
+            success = false,
+            detail = message,
+        )
+    }
+}
+
+private fun parsePeerRelayEnvelope(raw: JSONObject): PeerRelayEnvelope {
+    val seenNodes = parseStringList(raw.optJSONArray("seen_nodes") ?: JSONArray())
+    return PeerRelayEnvelope(
+        messageId = raw.optString("message_id"),
+        ttl = raw.optInt("ttl", 0),
+        seenNodes = if (seenNodes.isEmpty()) listOf("unknown") else seenNodes,
+        attemptCount = raw.optInt("attempt_count", 0),
+        payload = raw.optJSONObject("payload") ?: JSONObject(),
+    )
+}
+
+private fun parseStringList(array: JSONArray): List<String> {
+    val result = mutableListOf<String>()
+    for (index in 0 until array.length()) {
+        val value = array.optString(index)
+        if (value.isNotBlank()) {
+            result += value
+        }
+    }
+    return result
+}
+
+private fun extractMutationIds(mutationsArray: JSONArray): JSONArray {
+    val ids = JSONArray()
+    for (index in 0 until mutationsArray.length()) {
+        val mutationJson = mutationsArray.optJSONObject(index) ?: continue
+        val mutationId = mutationJson.optString("mutation_id")
+        if (mutationId.isNotBlank()) {
+            ids.put(mutationId)
+        }
+    }
+    return ids
+}
+
+private fun mutationLogsToJsonArray(mutations: List<me.zayedbinhasan.data.Mutation_logs>): JSONArray {
+    val payload = JSONArray()
+    mutations.forEach { mutation ->
+        payload.put(
+            JSONObject().apply {
+                put("mutation_id", mutation.mutation_id)
+                put("entity_type", mutation.entity_type)
+                put("entity_id", mutation.entity_id)
+                put("changed_fields", JSONObject(parseStringMap(mutation.changed_fields_json)))
+                put("actor_id", mutation.actor_id)
+                put("timestamp", mutation.mutation_timestamp)
+                put("device_id", mutation.device_id)
+                put("vector_clock", JSONObject(parseLongMap(mutation.vector_clock_json)))
+            },
+        )
+    }
+    return payload
+}
+
+private fun parseIncomingMutationsArray(mutationsArray: JSONArray): List<IncomingMutation> {
+    val incomingMutations = mutableListOf<IncomingMutation>()
+
+    for (index in 0 until mutationsArray.length()) {
+        val mutationJson = mutationsArray.optJSONObject(index) ?: continue
+        val entityType = mutationJson.optString("entity_type")
+        val entityId = mutationJson.optString("entity_id")
+        val timestamp = mutationJson.optLong("timestamp")
+
+        val changedFields = when {
+            mutationJson.has("changed_fields") -> {
+                parseStringMap(mutationJson.optJSONObject("changed_fields")?.toString())
+            }
+            else -> {
+                parseStringMap(mutationJson.optString("changed_fields_json"))
+            }
+        }
+
+        changedFields.forEach { (fieldName, remoteValue) ->
+            val strategy = when (fieldName) {
+                "quantity" -> "ADDITIVE"
+                "assigned_driver_id" -> "MANUAL_OWNERSHIP"
+                else -> "LWW"
+            }
+            incomingMutations += IncomingMutation(
+                entityType = entityType,
+                entityId = entityId,
+                fieldName = fieldName,
+                remoteValue = remoteValue,
+                mergeStrategy = strategy,
+                timestamp = timestamp,
+            )
+        }
+    }
+
+    return incomingMutations
+}
+
 private fun performServerDeltaSync(
     baseUrl: String,
     nodeId: String,
@@ -1362,30 +1854,7 @@ private fun performServerDeltaSync(
     outgoingMutations: List<me.zayedbinhasan.data.Mutation_logs>,
 ): ServerDeltaSyncResult? {
     return runCatching {
-        val requestJson = JSONObject().apply {
-            put("node_id", nodeId)
-            put("checkpoint", JSONObject().apply {
-                put(nodeId, checkpointCounter)
-            })
-
-            val outgoingArray = JSONArray()
-            outgoingMutations.forEach { mutation ->
-                val vectorClock = parseLongMap(mutation.vector_clock_json)
-                outgoingArray.put(
-                    JSONObject().apply {
-                        put("mutation_id", mutation.mutation_id)
-                        put("entity_type", mutation.entity_type)
-                        put("entity_id", mutation.entity_id)
-                        put("changed_fields_json", mutation.changed_fields_json)
-                        put("actor_id", mutation.actor_id)
-                        put("timestamp", mutation.mutation_timestamp)
-                        put("device_id", mutation.device_id)
-                        put("vector_clock", JSONObject(vectorClock))
-                    },
-                )
-            }
-            put("outgoing_mutations", outgoingArray)
-        }
+        val requestJson = buildDeltaSyncRequestJson(nodeId, checkpointCounter, outgoingMutations)
 
         val url = URL("$baseUrl/api/sync/delta")
         val connection = (url.openConnection() as HttpURLConnection).apply {
