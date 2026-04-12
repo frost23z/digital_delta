@@ -239,6 +239,12 @@ SELECT *
 FROM audit_events
 ORDER BY event_timestamp DESC;
 
+selectLatestAuditHash:
+SELECT event_hash
+FROM audit_events
+ORDER BY event_timestamp DESC
+LIMIT 1;
+
 insertAuditEvent:
 INSERT INTO audit_events(
   event_id,

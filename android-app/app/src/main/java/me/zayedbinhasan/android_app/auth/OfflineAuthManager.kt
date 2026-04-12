@@ -7,7 +7,9 @@ import android.util.Base64
 import java.nio.ByteBuffer
 import java.security.KeyPairGenerator
 import java.security.KeyStore
+import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.UUID
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import me.zayedbinhasan.android_app.data.local.repository.LocalRepository
@@ -19,11 +21,15 @@ private const val KEY_CACHED_ALIAS = "cached_alias"
 private const val KEY_CACHED_SECRET = "cached_totp_secret"
 private const val KEY_SESSION_USER_ID = "session_user_id"
 private const val KEY_SESSION_ROLE = "session_role"
+private const val KEY_FAILED_OTP_ATTEMPTS = "failed_otp_attempts"
+private const val KEY_LOCKOUT_UNTIL_MS = "lockout_until_ms"
 
 private const val KEYSTORE_PROVIDER = "AndroidKeyStore"
 
 private const val OTP_DIGITS = 6
 private const val OTP_PERIOD_SECONDS = 30L
+private const val OTP_MAX_FAILED_ATTEMPTS = 5
+private const val OTP_LOCKOUT_DURATION_MS = 2 * 60 * 1000L
 
 data class CachedIdentity(
     val userId: String,
@@ -86,47 +92,71 @@ class OfflineAuthManager(
     }
 
     fun provisionIdentity(userId: String, role: String): CachedIdentity? {
-        return runCatching {
         val normalizedUserId = userId.trim().ifEmpty { "field-volunteer" }
         val normalizedRole = role.trim().ifEmpty { "FIELD_VOLUNTEER" }
-        val alias = "digital_delta_key_$normalizedUserId"
-        val publicKey = DeviceKeyStore.ensureKeyAndGetPublicKey(alias)
-            ?: return null
-        val now = System.currentTimeMillis()
 
-        val existing = repository.userById(normalizedUserId)
-        val createdAt = existing?.created_at ?: now
+        return try {
+            val alias = "digital_delta_key_$normalizedUserId"
+            val publicKey = DeviceKeyStore.ensureKeyAndGetPublicKey(alias)
+            if (publicKey == null) {
+                appendAuditEvent(
+                    eventType = "AUTH_PROVISION_FAILURE",
+                    actorId = normalizedUserId,
+                    entityType = "user",
+                    entityId = normalizedUserId,
+                )
+                return null
+            }
+            val now = System.currentTimeMillis()
 
-        repository.upsertUser(
-            userId = normalizedUserId,
-            displayName = normalizedUserId,
-            role = normalizedRole,
-            publicKey = publicKey,
-            active = true,
-            createdAt = createdAt,
-            updatedAt = now,
-        )
-        appendMutation(entityType = "user", entityId = normalizedUserId, operationType = "UPSERT_AUTH_PROVISION")
+            val existing = repository.userById(normalizedUserId)
+            val createdAt = existing?.created_at ?: now
 
-        if (readSecret() == null) {
-            val secret = ByteArray(20)
-            SecureRandom().nextBytes(secret)
-            prefs.edit().putString(KEY_CACHED_SECRET, Base64.encodeToString(secret, Base64.NO_WRAP)).apply()
+            repository.upsertUser(
+                userId = normalizedUserId,
+                displayName = normalizedUserId,
+                role = normalizedRole,
+                publicKey = publicKey,
+                active = true,
+                createdAt = createdAt,
+                updatedAt = now,
+            )
+            appendMutation(entityType = "user", entityId = normalizedUserId, operationType = "UPSERT_AUTH_PROVISION")
+
+            if (readSecret() == null) {
+                val secret = ByteArray(20)
+                SecureRandom().nextBytes(secret)
+                prefs.edit().putString(KEY_CACHED_SECRET, Base64.encodeToString(secret, Base64.NO_WRAP)).apply()
+            }
+
+            prefs.edit()
+                .putString(KEY_CACHED_USER_ID, normalizedUserId)
+                .putString(KEY_CACHED_ROLE, normalizedRole)
+                .putString(KEY_CACHED_ALIAS, alias)
+                .apply()
+
+            appendAuditEvent(
+                eventType = "AUTH_PROVISION_SUCCESS",
+                actorId = normalizedUserId,
+                entityType = "user",
+                entityId = normalizedUserId,
+            )
+
+            CachedIdentity(
+                userId = normalizedUserId,
+                role = normalizedRole,
+                keyAlias = alias,
+                publicKey = publicKey,
+            )
+        } catch (_: Exception) {
+            appendAuditEvent(
+                eventType = "AUTH_PROVISION_FAILURE",
+                actorId = normalizedUserId,
+                entityType = "user",
+                entityId = normalizedUserId,
+            )
+            null
         }
-
-        prefs.edit()
-            .putString(KEY_CACHED_USER_ID, normalizedUserId)
-            .putString(KEY_CACHED_ROLE, normalizedRole)
-            .putString(KEY_CACHED_ALIAS, alias)
-            .apply()
-
-        return CachedIdentity(
-            userId = normalizedUserId,
-            role = normalizedRole,
-            keyAlias = alias,
-            publicKey = publicKey,
-        )
-        }.getOrNull()
     }
 
     fun generateCurrentOtp(): OtpPreview? {
@@ -140,23 +170,61 @@ class OfflineAuthManager(
     }
 
     fun loginOffline(userId: String, otp: String): OfflineAuthSession? {
-        return runCatching {
-        val identity = cachedIdentity() ?: return null
-        val targetUserId = userId.trim().ifEmpty { identity.userId }
-        if (identity.userId != targetUserId) {
+        val identity = cachedIdentity()
+        val targetUserId = userId.trim().ifEmpty { identity?.userId ?: "" }
+        if (targetUserId.isBlank()) {
+            appendAuditEvent(
+                eventType = "AUTH_LOGIN_FAILURE",
+                actorId = "unknown",
+                entityType = "auth_session",
+                entityId = "unknown",
+            )
+            return null
+        }
+
+        if (currentLockoutRemainingSeconds() > 0L) {
+            appendAuditEvent(
+                eventType = "AUTH_LOGIN_LOCKED",
+                actorId = targetUserId,
+                entityType = "auth_session",
+                entityId = targetUserId,
+            )
+            return null
+        }
+
+        if (identity == null || identity.userId != targetUserId) {
+            appendAuditEvent(
+                eventType = "AUTH_LOGIN_FAILURE",
+                actorId = targetUserId,
+                entityType = "auth_session",
+                entityId = targetUserId,
+            )
             return null
         }
 
         if (!DeviceKeyStore.hasKey(identity.keyAlias)) {
+            appendAuditEvent(
+                eventType = "AUTH_LOGIN_FAILURE",
+                actorId = targetUserId,
+                entityType = "auth_session",
+                entityId = targetUserId,
+            )
             return null
         }
 
         if (!verifyOtp(otp.trim())) {
+            registerFailedOtpAttempt(targetUserId)
             return null
         }
 
-        val user = repository.userById(identity.userId) ?: return null
-        if (!user.active) {
+        val user = repository.userById(identity.userId)
+        if (user == null || !user.active) {
+            appendAuditEvent(
+                eventType = "AUTH_LOGIN_FAILURE",
+                actorId = targetUserId,
+                entityType = "auth_session",
+                entityId = targetUserId,
+            )
             return null
         }
 
@@ -165,14 +233,68 @@ class OfflineAuthManager(
             .putString(KEY_SESSION_ROLE, user.role)
             .apply()
 
+        clearFailedOtpState()
         appendMutation(entityType = "auth_session", entityId = user.user_id, operationType = "UPSERT_OFFLINE_SESSION")
+        appendAuditEvent(
+            eventType = "AUTH_LOGIN_SUCCESS",
+            actorId = user.user_id,
+            entityType = "auth_session",
+            entityId = user.user_id,
+        )
 
         return OfflineAuthSession(
             userId = user.user_id,
             role = user.role,
             authMode = "OFFLINE_RELOGIN",
         )
-        }.getOrNull()
+    }
+
+    fun lockoutRemainingSeconds(): Long = currentLockoutRemainingSeconds()
+
+    private fun registerFailedOtpAttempt(userId: String) {
+        val nextAttempts = prefs.getInt(KEY_FAILED_OTP_ATTEMPTS, 0) + 1
+        val editor = prefs.edit().putInt(KEY_FAILED_OTP_ATTEMPTS, nextAttempts)
+
+        appendAuditEvent(
+            eventType = "AUTH_LOGIN_FAILURE",
+            actorId = userId,
+            entityType = "auth_session",
+            entityId = userId,
+        )
+
+        if (nextAttempts >= OTP_MAX_FAILED_ATTEMPTS) {
+            editor.putInt(KEY_FAILED_OTP_ATTEMPTS, 0)
+            editor.putLong(KEY_LOCKOUT_UNTIL_MS, System.currentTimeMillis() + OTP_LOCKOUT_DURATION_MS)
+            appendAuditEvent(
+                eventType = "AUTH_LOGIN_LOCKED",
+                actorId = userId,
+                entityType = "auth_session",
+                entityId = userId,
+            )
+        }
+
+        editor.apply()
+    }
+
+    private fun clearFailedOtpState() {
+        prefs.edit()
+            .putInt(KEY_FAILED_OTP_ATTEMPTS, 0)
+            .remove(KEY_LOCKOUT_UNTIL_MS)
+            .apply()
+    }
+
+    private fun currentLockoutRemainingSeconds(): Long {
+        val lockoutUntil = prefs.getLong(KEY_LOCKOUT_UNTIL_MS, 0L)
+        if (lockoutUntil <= 0L) {
+            return 0L
+        }
+
+        val remainingMillis = lockoutUntil - System.currentTimeMillis()
+        return if (remainingMillis <= 0L) {
+            0L
+        } else {
+            (remainingMillis + 999L) / 1000L
+        }
     }
 
     private fun verifyOtp(otp: String): Boolean {
@@ -222,6 +344,43 @@ class OfflineAuthManager(
             )
         }
     }
+
+    private fun appendAuditEvent(
+        eventType: String,
+        actorId: String,
+        entityType: String,
+        entityId: String,
+    ) {
+        runCatching {
+            val timestamp = System.currentTimeMillis()
+            val prevHash = repository.latestAuditHash() ?: "GENESIS"
+            val canonicalEventPayload = listOf(
+                eventType,
+                actorId,
+                entityType,
+                entityId,
+                timestamp.toString(),
+            ).joinToString("|")
+            val eventHash = sha256Hex("$prevHash|$canonicalEventPayload")
+
+            repository.insertAuditEvent(
+                eventId = "audit-${UUID.randomUUID()}",
+                eventType = eventType,
+                actorId = actorId,
+                entityType = entityType,
+                entityId = entityId,
+                eventTimestamp = timestamp,
+                prevHash = prevHash,
+                eventHash = eventHash,
+            )
+        }
+    }
+
+    private fun sha256Hex(input: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val bytes = digest.digest(input.toByteArray(Charsets.UTF_8))
+        return bytes.joinToString(separator = "") { byte -> "%02x".format(byte) }
+    }
 }
 
 private object DeviceKeyStore {
@@ -268,8 +427,8 @@ private object Totp {
         val counter = timeSeconds / OTP_PERIOD_SECONDS
         val data = ByteBuffer.allocate(8).putLong(counter).array()
 
-        val mac = Mac.getInstance("HmacSHA1")
-        mac.init(SecretKeySpec(secret, "HmacSHA1"))
+        val mac = Mac.getInstance("HmacSHA256")
+        mac.init(SecretKeySpec(secret, "HmacSHA256"))
         val hash = mac.doFinal(data)
 
         val offset = hash.last().toInt() and 0x0f

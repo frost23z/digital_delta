@@ -325,8 +325,14 @@ private fun LoginScreen(
                     if (session != null) {
                         onLoginSuccess(session)
                     } else {
-                        offlineAuthState = "AUTH_FAILED"
-                        sessionStatus = "OTP_OR_IDENTITY_INVALID"
+                        val lockoutRemaining = authManager.lockoutRemainingSeconds()
+                        if (lockoutRemaining > 0L) {
+                            offlineAuthState = "AUTH_LOCKED"
+                            sessionStatus = "LOCKED_${lockoutRemaining}s"
+                        } else {
+                            offlineAuthState = "AUTH_FAILED"
+                            sessionStatus = "OTP_OR_IDENTITY_INVALID"
+                        }
                     }
                 },
                 enabled = cachedIdentityUserId.isNotEmpty() && (otpInput.length == 6 || otpPreview.length == 6),
@@ -415,6 +421,7 @@ private fun AuthenticatedShell(
             AppNavHost(
                 repository = repository,
                 navController = navController,
+                activeRole = session.role,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
@@ -476,6 +483,7 @@ private fun SessionStatusHeader(
 private fun AppNavHost(
     repository: LocalRepository,
     navController: NavHostController,
+    activeRole: String,
     modifier: Modifier = Modifier,
 ) {
     NavHost(
@@ -490,7 +498,10 @@ private fun AppNavHost(
             DeliveriesScreen(repository = repository)
         }
         composable(AppRoutes.ROUTE) {
-            RoutesScreen(repository = repository)
+            RoutesScreen(
+                repository = repository,
+                activeRole = activeRole,
+            )
         }
         composable(AppRoutes.POD) {
             PodScreen(repository = repository)
@@ -657,10 +668,14 @@ private fun DeliveriesScreen(repository: LocalRepository) {
 }
 
 @Composable
-private fun RoutesScreen(repository: LocalRepository) {
+private fun RoutesScreen(
+    repository: LocalRepository,
+    activeRole: String,
+) {
     val routesRaw by remember(repository) {
         repository.observeRoutes()
     }.collectAsState(initial = emptyList())
+    val canManageRoutes = canManageRouteActions(activeRole)
 
     val routes = routesRaw.map { row ->
         RouteFullUi(
@@ -680,7 +695,10 @@ private fun RoutesScreen(repository: LocalRepository) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("Routes", fontWeight = FontWeight.Bold)
-        Button(onClick = { insertDemoRoute(repository) }) {
+        if (!canManageRoutes) {
+            Text("Route management requires MANAGER/COMMANDER/ADMIN role")
+        }
+        Button(onClick = { insertDemoRoute(repository) }, enabled = canManageRoutes) {
             Text("Create Route")
         }
 
@@ -693,7 +711,7 @@ private fun RoutesScreen(repository: LocalRepository) {
                         Text("Duration: ${route.totalDurationMins} mins")
                         Text("Reason: ${route.reasonCode}")
                         Text("Edges: ${route.edgeIds}")
-                        Button(onClick = { deleteRoute(repository, route.routeId) }) {
+                        Button(onClick = { deleteRoute(repository, route.routeId) }, enabled = canManageRoutes) {
                             Text("Delete")
                         }
                     }
@@ -2054,3 +2072,7 @@ private data class ConflictUi(
     val manualRequired: Boolean,
     val createdAt: Long,
 )
+
+private fun canManageRouteActions(role: String): Boolean {
+    return role == "SUPPLY_MANAGER" || role == "CAMP_COMMANDER" || role == "SYNC_ADMIN"
+}

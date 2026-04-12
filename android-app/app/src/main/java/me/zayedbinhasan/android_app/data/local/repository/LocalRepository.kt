@@ -68,6 +68,9 @@ class LocalRepository(
     fun latestMutationTimestampNow(): Long? =
         queries.selectLatestMutationTimestamp().executeAsOneOrNull()
 
+    fun latestAuditHash(): String? =
+        queries.selectLatestAuditHash().executeAsOneOrNull()
+
     fun upsertUser(
         userId: String,
         displayName: String,
@@ -199,6 +202,28 @@ class LocalRepository(
             device_id = deviceId,
             mutation_timestamp = mutationTimestamp,
             synced = synced,
+        )
+    }
+
+    fun insertAuditEvent(
+        eventId: String,
+        eventType: String,
+        actorId: String,
+        entityType: String,
+        entityId: String,
+        eventTimestamp: Long,
+        prevHash: String,
+        eventHash: String,
+    ) {
+        queries.insertAuditEvent(
+            event_id = eventId,
+            event_type = eventType,
+            actor_id = actorId,
+            entity_type = entityType,
+            entity_id = entityId,
+            event_timestamp = eventTimestamp,
+            prev_hash = prevHash,
+            event_hash = eventHash,
         )
     }
 
