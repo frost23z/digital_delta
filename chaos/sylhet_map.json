@@ -1,0 +1,24 @@
+{
+  "metadata": {
+    "region": "Sylhet Division",
+    "scenario": "Flash Flood Delta",
+    "last_updated": "2026-04-12T08:00:00Z"
+  },
+  "nodes": [
+    { "id": "N1", "name": "Sylhet City Hub", "type": "central_command", "lat": 24.8949, "lng": 91.8687 },
+    { "id": "N2", "name": "Osmani Airport Node", "type": "supply_drop", "lat": 24.9632, "lng": 91.8668 },
+    { "id": "N3", "name": "Sunamganj Sadar Camp", "type": "relief_camp", "lat": 25.0658, "lng": 91.4073 },
+    { "id": "N4", "name": "Companyganj Outpost", "type": "relief_camp", "lat": 25.0715, "lng": 91.7554 },
+    { "id": "N5", "name": "Kanaighat Point", "type": "waypoint", "lat": 24.9945, "lng": 92.2611 },
+    { "id": "N6", "name": "Habiganj Medical", "type": "hospital", "lat": 24.3840, "lng": 91.4169 }
+  ],
+  "edges": [
+    { "id": "E1", "source": "N1", "target": "N2", "type": "road", "base_weight_mins": 20, "is_flooded": false },
+    { "id": "E2", "source": "N1", "target": "N3", "type": "road", "base_weight_mins": 90, "is_flooded": false },
+    { "id": "E3", "source": "N2", "target": "N4", "type": "road", "base_weight_mins": 45, "is_flooded": false },
+    { "id": "E4", "source": "N1", "target": "N5", "type": "road", "base_weight_mins": 60, "is_flooded": false },
+    { "id": "E5", "source": "N1", "target": "N6", "type": "road", "base_weight_mins": 120, "is_flooded": false },
+    { "id": "E6", "source": "N1", "target": "N3", "type": "river", "base_weight_mins": 150, "is_flooded": false }, 
+    { "id": "E7", "source": "N3", "target": "N4", "type": "river", "base_weight_mins": 50, "is_flooded": false }
+  ]
+}
