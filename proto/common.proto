@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package digitaldelta.v1;
+
+option go_package = "github.com/frost23z/digital_delta/sync-server/internal/gen/proto;digitaldeltav1";
+option java_multiple_files = true;
+option java_package = "me.zayedbinhasan.digitaldelta.proto";
+
+message VectorClock {
+  map<string, uint64> counters = 1;
+}
+
+message SyncCheckpoint {
+  map<string, uint64> last_seen_counter_by_device = 1;
+}
+
+message GeoLocation {
+  double lat = 1;
+  double lng = 2;
+  float accuracy_meters = 3;
+}
+
+enum OfflineState {
+  OFFLINE_STATE_UNSPECIFIED = 0;
+  OFFLINE = 1;
+  SYNCING = 2;
+  CONFLICT_DETECTED = 3;
+  VERIFIED = 4;
+}
+
+message AuditChainEntry {
+  string event_id = 1;
+  string event_type = 2;
+  string actor_id = 3;
+  string entity_type = 4;
+  string entity_id = 5;
+  uint64 timestamp = 6;
+  bytes prev_hash = 7;
+  bytes event_hash = 8;
+  VectorClock vector_clock = 9;
+}

@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package digitaldelta.v1;
+
+option go_package = "github.com/frost23z/digital_delta/sync-server/internal/gen/proto;digitaldeltav1";
+option java_multiple_files = true;
+option java_package = "me.zayedbinhasan.digitaldelta.proto";
+
+import "common.proto";
+
+message PODPayload {
+  string delivery_id = 1;
+  string sender_user_id = 2;
+  string recipient_user_id = 3;
+  bytes payload_hash = 4;
+  uint64 nonce = 5;
+  uint64 timestamp = 6;
+}
+
+message PODReceipt {
+  string receipt_id = 1;
+  PODPayload payload = 2;
+  bytes sender_signature = 3;
+  bytes recipient_signature = 4;
+  bool verified = 5;
+  uint64 verified_at = 6;
+  VectorClock vector_clock = 7;
+}
+
+message PODVerificationResult {
+  bool accepted = 1;
+  string reason = 2;
+  string receipt_id = 3;
+}

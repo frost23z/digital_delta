@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package digitaldelta.v1;
+
+option go_package = "github.com/frost23z/digital_delta/sync-server/internal/gen/proto;digitaldeltav1";
+option java_multiple_files = true;
+option java_package = "me.zayedbinhasan.digitaldelta.proto";
+
+import "common.proto";
+
+enum UserRole {
+  USER_ROLE_UNSPECIFIED = 0;
+  FIELD_VOLUNTEER = 1;
+  SUPPLY_MANAGER = 2;
+  DRONE_OPERATOR = 3;
+  CAMP_COMMANDER = 4;
+  SYNC_ADMIN = 5;
+}
+
+enum AuthEventType {
+  AUTH_EVENT_TYPE_UNSPECIFIED = 0;
+  LOGIN = 1;
+  OTP_VERIFY = 2;
+  KEY_ROTATION = 3;
+  FAILURE = 4;
+  PROVISION = 5;
+}
+
+message UserIdentity {
+  string user_id = 1;
+  string display_name = 2;
+  UserRole role = 3;
+  string public_key = 4;
+  uint64 created_at = 5;
+  uint64 updated_at = 6;
+  bool active = 7;
+}
+
+message AuthEvent {
+  string event_id = 1;
+  string user_id = 2;
+  AuthEventType event_type = 3;
+  string device_id = 4;
+  uint64 timestamp = 5;
+  bytes prev_hash = 6;
+  bytes event_hash = 7;
+  VectorClock vector_clock = 8;
+}
+
+message OfflineLoginRequest {
+  string user_id = 1;
+  string device_id = 2;
+  string otp_code = 3;
+  uint64 timestamp = 4;
+}
+
+message OfflineLoginResponse {
+  bool ok = 1;
+  string reason = 2;
+  UserRole role = 3;
+  uint64 session_expires_at = 4;
+}

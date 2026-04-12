@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package digitaldelta.v1;
+
+option go_package = "github.com/frost23z/digital_delta/sync-server/internal/gen/proto;digitaldeltav1";
+option java_multiple_files = true;
+option java_package = "me.zayedbinhasan.digitaldelta.proto";
+
+import "common.proto";
+
+enum MeshPayloadType {
+  MESH_PAYLOAD_TYPE_UNSPECIFIED = 0;
+  MUTATION_BATCH = 1;
+  ROUTE_UPDATE = 2;
+  POD_RECEIPT = 3;
+  AUTH_EVENT = 4;
+}
+
+message MeshMessage {
+  string message_id = 1;
+  string sender_id = 2;
+  string recipient_id = 3;
+  MeshPayloadType payload_type = 4;
+  bytes payload = 5;
+  uint32 ttl = 6;
+  repeated string seen_nodes = 7;
+  uint32 attempt_count = 8;
+  uint64 created_at = 9;
+  VectorClock vector_clock = 10;
+}
+
+message RelayPolicy {
+  uint32 max_ttl = 1;
+  uint32 max_attempts = 2;
+  uint32 base_backoff_ms = 3;
+}
+
+message RelayAck {
+  string message_id = 1;
+  string node_id = 2;
+  bool accepted = 3;
+  string reason = 4;
+  uint64 timestamp = 5;
+}
