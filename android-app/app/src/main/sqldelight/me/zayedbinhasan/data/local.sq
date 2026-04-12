@@ -1,0 +1,211 @@
+import kotlin.Boolean;
+
+CREATE TABLE users (
+  user_id TEXT NOT NULL PRIMARY KEY,
+  display_name TEXT NOT NULL,
+  role TEXT NOT NULL,
+  public_key TEXT,
+  active INTEGER AS Boolean NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE deliveries (
+  task_id TEXT NOT NULL PRIMARY KEY,
+  supply_id TEXT NOT NULL,
+  quantity INTEGER NOT NULL,
+  origin_id TEXT NOT NULL,
+  destination_id TEXT NOT NULL,
+  priority TEXT NOT NULL,
+  deadline_timestamp INTEGER NOT NULL,
+  assigned_driver_id TEXT,
+  status TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE routes (
+  route_id TEXT NOT NULL PRIMARY KEY,
+  edge_ids_json TEXT NOT NULL,
+  total_duration_mins INTEGER NOT NULL,
+  vehicle TEXT NOT NULL,
+  eta_timestamp INTEGER NOT NULL,
+  reason_code TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE receipts (
+  receipt_id TEXT NOT NULL PRIMARY KEY,
+  delivery_id TEXT NOT NULL,
+  sender_user_id TEXT NOT NULL,
+  recipient_user_id TEXT NOT NULL,
+  payload_hash TEXT NOT NULL,
+  nonce INTEGER NOT NULL,
+  sender_signature TEXT NOT NULL,
+  recipient_signature TEXT NOT NULL,
+  verified INTEGER AS Boolean NOT NULL DEFAULT 0,
+  verified_at INTEGER NOT NULL
+);
+
+CREATE UNIQUE INDEX receipts_nonce_idx ON receipts(nonce);
+
+CREATE TABLE audit_events (
+  event_id TEXT NOT NULL PRIMARY KEY,
+  event_type TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  event_timestamp INTEGER NOT NULL,
+  prev_hash TEXT NOT NULL,
+  event_hash TEXT NOT NULL
+);
+
+CREATE TABLE mutation_logs (
+  mutation_id TEXT NOT NULL PRIMARY KEY,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  operation_type TEXT NOT NULL,
+  changed_fields_json TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  device_id TEXT NOT NULL,
+  mutation_timestamp INTEGER NOT NULL,
+  synced INTEGER AS Boolean NOT NULL DEFAULT 0
+);
+
+CREATE INDEX mutation_logs_sync_idx ON mutation_logs(synced, mutation_timestamp);
+
+selectAllUsers:
+SELECT *
+FROM users
+ORDER BY updated_at DESC;
+
+selectUserById:
+SELECT *
+FROM users
+WHERE user_id = ?;
+
+upsertUser:
+INSERT OR REPLACE INTO users(
+  user_id,
+  display_name,
+  role,
+  public_key,
+  active,
+  created_at,
+  updated_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?);
+
+selectAllDeliveries:
+SELECT *
+FROM deliveries
+ORDER BY updated_at DESC;
+
+selectDeliveryById:
+SELECT *
+FROM deliveries
+WHERE task_id = ?;
+
+upsertDelivery:
+INSERT OR REPLACE INTO deliveries(
+  task_id,
+  supply_id,
+  quantity,
+  origin_id,
+  destination_id,
+  priority,
+  deadline_timestamp,
+  assigned_driver_id,
+  status,
+  updated_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+selectAllRoutes:
+SELECT *
+FROM routes
+ORDER BY updated_at DESC;
+
+selectRouteById:
+SELECT *
+FROM routes
+WHERE route_id = ?;
+
+upsertRoute:
+INSERT OR REPLACE INTO routes(
+  route_id,
+  edge_ids_json,
+  total_duration_mins,
+  vehicle,
+  eta_timestamp,
+  reason_code,
+  updated_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?);
+
+selectAllReceipts:
+SELECT *
+FROM receipts
+ORDER BY verified_at DESC;
+
+selectReceiptById:
+SELECT *
+FROM receipts
+WHERE receipt_id = ?;
+
+upsertReceipt:
+INSERT OR REPLACE INTO receipts(
+  receipt_id,
+  delivery_id,
+  sender_user_id,
+  recipient_user_id,
+  payload_hash,
+  nonce,
+  sender_signature,
+  recipient_signature,
+  verified,
+  verified_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+selectAllAuditEvents:
+SELECT *
+FROM audit_events
+ORDER BY event_timestamp DESC;
+
+insertAuditEvent:
+INSERT INTO audit_events(
+  event_id,
+  event_type,
+  actor_id,
+  entity_type,
+  entity_id,
+  event_timestamp,
+  prev_hash,
+  event_hash
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+insertMutation:
+INSERT INTO mutation_logs(
+  mutation_id,
+  entity_type,
+  entity_id,
+  operation_type,
+  changed_fields_json,
+  actor_id,
+  device_id,
+  mutation_timestamp,
+  synced
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+selectPendingMutations:
+SELECT *
+FROM mutation_logs
+WHERE synced = 0
+ORDER BY mutation_timestamp ASC;
+
+markMutationSynced:
+UPDATE mutation_logs
+SET synced = 1
+WHERE mutation_id = ?;
