@@ -2,6 +2,7 @@ package me.zayedbinhasan.android_app
 
 import app.cash.sqldelight.coroutines.asFlow
 import app.cash.sqldelight.coroutines.mapToList
+import app.cash.sqldelight.coroutines.mapToOneOrNull
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -14,7 +15,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Directions
 import androidx.compose.material.icons.filled.Inventory2
@@ -105,6 +105,8 @@ private object AppRoutes {
     const val POD = "pod"
     const val SYNC_STATUS = "sync_status"
 }
+
+private const val DEFAULT_SYNC_PEER_ID = "sync-server-main"
 
 private val appDestinations = listOf(
     AppDestination(route = AppRoutes.DASHBOARD, title = "Dashboard", icon = Icons.Filled.Dashboard),
@@ -459,9 +461,10 @@ private fun PodScreen(database: Database) {
 @Composable
 private fun SyncStatusScreen(database: Database) {
     val queries = database.localQueries
+    val peerId = DEFAULT_SYNC_PEER_ID
 
     val pendingMutations by remember(queries) {
-        queries.selectPendingMutations { mutationId, entityType, entityId, operationType, _, _, deviceId, mutationTimestamp, _ ->
+        queries.selectPendingMutations { mutationId, entityType, entityId, operationType, _, _, _, deviceId, mutationTimestamp, _ ->
             MutationUi(
                 mutationId = mutationId,
                 entityType = entityType,
@@ -473,6 +476,36 @@ private fun SyncStatusScreen(database: Database) {
         }.asFlow().mapToList(Dispatchers.IO)
     }.collectAsState(initial = emptyList())
 
+    val latestMutationTimestamp by remember(queries) {
+        queries.selectLatestMutationTimestamp().asFlow().mapToOneOrNull(Dispatchers.IO)
+    }.collectAsState(initial = null)
+
+    val checkpoints by remember(queries) {
+        queries.selectAllSyncCheckpoints { checkpointPeerId, lastSeenCounter, lastSyncTimestamp, updatedAt ->
+            SyncCheckpointUi(
+                peerId = checkpointPeerId,
+                lastSeenCounter = lastSeenCounter,
+                lastSyncTimestamp = lastSyncTimestamp,
+                updatedAt = updatedAt,
+            )
+        }.asFlow().mapToList(Dispatchers.IO)
+    }.collectAsState(initial = emptyList())
+
+    val unseenForPeer by remember(queries, peerId) {
+        queries.selectUnseenMutationsForPeer(peerId) { mutationId, entityType, entityId, operationType, _, _, _, deviceId, mutationTimestamp, _ ->
+            MutationUi(
+                mutationId = mutationId,
+                entityType = entityType,
+                entityId = entityId,
+                operationType = operationType,
+                deviceId = deviceId,
+                mutationTimestamp = mutationTimestamp,
+            )
+        }.asFlow().mapToList(Dispatchers.IO)
+    }.collectAsState(initial = emptyList())
+
+    val activePeerCheckpoint = checkpoints.firstOrNull { it.peerId == peerId }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -483,11 +516,56 @@ private fun SyncStatusScreen(database: Database) {
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("Pending Changes: ${pendingMutations.size}")
+                Text("Latest Mutation: ${latestMutationTimestamp ?: "None"}")
+                Text("Unseen For $peerId: ${unseenForPeer.size}")
                 Text("Connection: Ready when peer/server is reachable")
+                Button(
+                    onClick = {
+                        simulateSyncWithPeer(
+                            queries = queries,
+                            peerId = peerId,
+                            appliedMutationCount = unseenForPeer.size,
+                        )
+                    },
+                ) {
+                    Text("Simulate Sync With Peer")
+                }
+            }
+        }
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Checkpoint (${peerId})", fontWeight = FontWeight.Bold)
+                if (activePeerCheckpoint == null) {
+                    Text("No checkpoint saved yet")
+                } else {
+                    Text("Last Seen Counter: ${activePeerCheckpoint.lastSeenCounter}")
+                    Text("Last Sync Timestamp: ${activePeerCheckpoint.lastSyncTimestamp}")
+                    Text("Updated At: ${activePeerCheckpoint.updatedAt}")
+                }
             }
         }
 
         HorizontalDivider()
+
+        Text("Known Peer Checkpoints", fontWeight = FontWeight.Bold)
+
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(checkpoints, key = { it.peerId }) { checkpoint ->
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(checkpoint.peerId, fontWeight = FontWeight.Bold)
+                        Text("Counter: ${checkpoint.lastSeenCounter}")
+                        Text("Last Sync: ${checkpoint.lastSyncTimestamp}")
+                        Text("Updated: ${checkpoint.updatedAt}")
+                    }
+                }
+            }
+        }
+
+        HorizontalDivider()
+
+        Text("Pending Mutation Queue", fontWeight = FontWeight.Bold)
 
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(pendingMutations, key = { it.mutationId }) { mutation ->
@@ -576,16 +654,43 @@ private fun appendMutation(
     entityId: String,
     operationType: String,
 ) {
+    val deviceId = "android_client"
+    val nextCounter = queries.selectLocalDeviceMutationCount(deviceId).executeAsOne() + 1
+    val vectorClockJson = "{\"$deviceId\":$nextCounter}"
+
     queries.insertMutation(
         mutation_id = "mut-${UUID.randomUUID().toString().take(12)}",
         entity_type = entityType,
         entity_id = entityId,
         operation_type = operationType,
         changed_fields_json = "{}",
+        vector_clock_json = vectorClockJson,
         actor_id = "ui_user",
-        device_id = "android_client",
+        device_id = deviceId,
         mutation_timestamp = System.currentTimeMillis(),
         synced = false,
+    )
+}
+
+private fun simulateSyncWithPeer(
+    queries: LocalQueries,
+    peerId: String,
+    appliedMutationCount: Int,
+) {
+    val now = System.currentTimeMillis()
+    val existingCheckpoint = queries.selectSyncCheckpointByPeer(peerId).executeAsOneOrNull()
+    val latestMutationTimestamp = queries.selectLatestMutationTimestamp().executeAsOneOrNull() ?: now
+    val nextCounter = (existingCheckpoint?.last_seen_counter ?: 0L) + appliedMutationCount.toLong()
+
+    if (appliedMutationCount > 0) {
+        queries.markAllMutationsSynced()
+    }
+
+    queries.upsertSyncCheckpoint(
+        peer_id = peerId,
+        last_seen_counter = nextCounter,
+        last_sync_timestamp = latestMutationTimestamp,
+        updated_at = now,
     )
 }
 
@@ -656,4 +761,11 @@ private data class MutationUi(
     val operationType: String,
     val deviceId: String,
     val mutationTimestamp: Long,
+)
+
+private data class SyncCheckpointUi(
+    val peerId: String,
+    val lastSeenCounter: Long,
+    val lastSyncTimestamp: Long,
+    val updatedAt: Long,
 )

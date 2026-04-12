@@ -65,13 +65,22 @@ CREATE TABLE mutation_logs (
   entity_id TEXT NOT NULL,
   operation_type TEXT NOT NULL,
   changed_fields_json TEXT NOT NULL,
+  vector_clock_json TEXT NOT NULL,
   actor_id TEXT NOT NULL,
   device_id TEXT NOT NULL,
   mutation_timestamp INTEGER NOT NULL,
   synced INTEGER AS Boolean NOT NULL DEFAULT 0
 );
 
+CREATE TABLE sync_checkpoints (
+  peer_id TEXT NOT NULL PRIMARY KEY,
+  last_seen_counter INTEGER NOT NULL,
+  last_sync_timestamp INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
 CREATE INDEX mutation_logs_sync_idx ON mutation_logs(synced, mutation_timestamp);
+CREATE INDEX sync_checkpoints_updated_idx ON sync_checkpoints(updated_at);
 
 selectAllUsers:
 SELECT *
@@ -200,12 +209,18 @@ INSERT INTO mutation_logs(
   entity_id,
   operation_type,
   changed_fields_json,
+  vector_clock_json,
   actor_id,
   device_id,
   mutation_timestamp,
   synced
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+selectLocalDeviceMutationCount:
+SELECT COUNT(*)
+FROM mutation_logs
+WHERE device_id = ?;
 
 selectPendingMutations:
 SELECT *
@@ -213,7 +228,45 @@ FROM mutation_logs
 WHERE synced = 0
 ORDER BY mutation_timestamp ASC;
 
+selectLatestMutationTimestamp:
+SELECT mutation_timestamp
+FROM mutation_logs
+ORDER BY mutation_timestamp DESC
+LIMIT 1;
+
+markAllMutationsSynced:
+UPDATE mutation_logs
+SET synced = 1
+WHERE synced = 0;
+
+selectUnseenMutationsForPeer:
+SELECT mutation_logs.*
+FROM mutation_logs
+LEFT JOIN sync_checkpoints ON sync_checkpoints.peer_id = ?
+WHERE mutation_logs.synced = 0
+   OR mutation_logs.mutation_timestamp > COALESCE(sync_checkpoints.last_sync_timestamp, 0)
+ORDER BY mutation_logs.mutation_timestamp ASC;
+
 markMutationSynced:
 UPDATE mutation_logs
 SET synced = 1
 WHERE mutation_id = ?;
+
+selectAllSyncCheckpoints:
+SELECT *
+FROM sync_checkpoints
+ORDER BY updated_at DESC;
+
+selectSyncCheckpointByPeer:
+SELECT *
+FROM sync_checkpoints
+WHERE peer_id = ?;
+
+upsertSyncCheckpoint:
+INSERT OR REPLACE INTO sync_checkpoints(
+  peer_id,
+  last_seen_counter,
+  last_sync_timestamp,
+  updated_at
+)
+VALUES (?, ?, ?, ?);
