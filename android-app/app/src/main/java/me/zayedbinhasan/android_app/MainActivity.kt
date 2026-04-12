@@ -39,6 +39,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -58,6 +59,14 @@ import me.zayedbinhasan.android_app.auth.OfflineAuthSession
 import me.zayedbinhasan.android_app.data.local.db.LocalDatabaseFactory
 import me.zayedbinhasan.android_app.data.local.repository.LocalRepository
 import me.zayedbinhasan.android_app.ui.theme.AndroidappTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.nio.charset.StandardCharsets
 import java.util.UUID
 
 class MainActivity : ComponentActivity() {
@@ -141,6 +150,7 @@ private object AppRoutes {
 }
 
 private const val DEFAULT_SYNC_PEER_ID = "sync-server-main"
+private const val DEFAULT_SYNC_HTTP_BASE_URL = "http://10.0.2.2:8081"
 
 private val appDestinations = listOf(
     AppDestination(route = AppRoutes.DASHBOARD, title = "Dashboard", icon = Icons.Filled.Dashboard),
@@ -735,6 +745,12 @@ private fun PodScreen(repository: LocalRepository) {
 @Composable
 private fun SyncStatusScreen(repository: LocalRepository) {
     val peerId = DEFAULT_SYNC_PEER_ID
+    val syncServerBaseUrl = DEFAULT_SYNC_HTTP_BASE_URL
+    val coroutineScope = rememberCoroutineScope()
+
+    var syncInProgress by rememberSaveable { mutableStateOf(false) }
+    var syncMessage by rememberSaveable { mutableStateOf("Idle") }
+    var lastServerSyncAt by rememberSaveable { mutableStateOf<Long?>(null) }
 
     val pendingMutationsRaw by remember(repository) {
         repository.observePendingMutations()
@@ -798,6 +814,64 @@ private fun SyncStatusScreen(repository: LocalRepository) {
                 Text("Latest Mutation: ${latestMutationTimestamp ?: "None"}")
                 Text("Unseen For $peerId: ${unseenForPeer.size}")
                 Text("Connection: Ready when peer/server is reachable")
+                Text("Sync State: $syncMessage")
+                Text("Last Server Sync: ${lastServerSyncAt ?: "Never"}")
+                Button(
+                    onClick = {
+                        if (syncInProgress) {
+                            return@Button
+                        }
+
+                        syncInProgress = true
+                        syncMessage = "SYNCING"
+
+                        coroutineScope.launch {
+                            val serverResult = withContext(Dispatchers.IO) {
+                                performServerDeltaSync(
+                                    baseUrl = syncServerBaseUrl,
+                                    nodeId = "android_client",
+                                    checkpointCounter = activePeerCheckpoint?.lastSeenCounter ?: 0L,
+                                    outgoingMutations = pendingMutationsRaw,
+                                )
+                            }
+
+                            if (serverResult == null) {
+                                syncMessage = "SYNC_ERROR"
+                                syncInProgress = false
+                                return@launch
+                            }
+
+                            if (serverResult.incomingMutations.isNotEmpty()) {
+                                applyIncomingMutations(repository, serverResult.incomingMutations)
+                            }
+
+                            if (serverResult.syncedMutationIds.isNotEmpty()) {
+                                repository.markAllMutationsSynced()
+                            }
+
+                            val checkpointCounter = serverResult.updatedCheckpoint.values.maxOrNull() ?: 0L
+                            val now = System.currentTimeMillis()
+                            repository.upsertSyncCheckpoint(
+                                peerId = peerId,
+                                lastSeenCounter = checkpointCounter,
+                                lastSyncTimestamp = now,
+                                updatedAt = now,
+                            )
+                            appendMutation(repository, entityType = "sync_checkpoint", entityId = peerId, operationType = "UPSERT")
+
+                            lastServerSyncAt = now
+                            syncMessage = if (serverResult.message.isNotEmpty()) {
+                                serverResult.message
+                            } else {
+                                "SYNC_OK"
+                            }
+                            syncInProgress = false
+                        }
+                    },
+                    enabled = !syncInProgress,
+                ) {
+                    Text(if (syncInProgress) "Syncing..." else "Sync Now (Server)")
+                }
                 Button(
                     onClick = {
                         simulateSyncWithPeer(
@@ -1272,6 +1346,147 @@ private fun applyIncomingMutations(repository: LocalRepository, incoming: List<I
             }
         }
     }
+}
+
+private data class ServerDeltaSyncResult(
+    val syncedMutationIds: List<String>,
+    val incomingMutations: List<IncomingMutation>,
+    val updatedCheckpoint: Map<String, Long>,
+    val message: String,
+)
+
+private fun performServerDeltaSync(
+    baseUrl: String,
+    nodeId: String,
+    checkpointCounter: Long,
+    outgoingMutations: List<me.zayedbinhasan.data.Mutation_logs>,
+): ServerDeltaSyncResult? {
+    return runCatching {
+        val requestJson = JSONObject().apply {
+            put("node_id", nodeId)
+            put("checkpoint", JSONObject().apply {
+                put(nodeId, checkpointCounter)
+            })
+
+            val outgoingArray = JSONArray()
+            outgoingMutations.forEach { mutation ->
+                val vectorClock = parseLongMap(mutation.vector_clock_json)
+                outgoingArray.put(
+                    JSONObject().apply {
+                        put("mutation_id", mutation.mutation_id)
+                        put("entity_type", mutation.entity_type)
+                        put("entity_id", mutation.entity_id)
+                        put("changed_fields_json", mutation.changed_fields_json)
+                        put("actor_id", mutation.actor_id)
+                        put("timestamp", mutation.mutation_timestamp)
+                        put("device_id", mutation.device_id)
+                        put("vector_clock", JSONObject(vectorClock))
+                    },
+                )
+            }
+            put("outgoing_mutations", outgoingArray)
+        }
+
+        val url = URL("$baseUrl/api/sync/delta")
+        val connection = (url.openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 6000
+            readTimeout = 6000
+            doOutput = true
+            setRequestProperty("Content-Type", "application/json")
+        }
+
+        connection.outputStream.use { output ->
+            output.write(requestJson.toString().toByteArray(StandardCharsets.UTF_8))
+        }
+
+        val responseCode = connection.responseCode
+        val responseBody = (if (responseCode in 200..299) connection.inputStream else connection.errorStream)
+            ?.bufferedReader()
+            ?.use { it.readText() }
+            ?: ""
+        connection.disconnect()
+
+        if (responseCode !in 200..299 || responseBody.isBlank()) {
+            return null
+        }
+
+        val responseJson = JSONObject(responseBody)
+        val syncedIds = mutableListOf<String>()
+        val syncedIdsArray = responseJson.optJSONArray("synced_mutation_ids") ?: JSONArray()
+        for (i in 0 until syncedIdsArray.length()) {
+            syncedIds += syncedIdsArray.optString(i)
+        }
+
+        val updatedCheckpoint = parseLongMap(responseJson.optJSONObject("updated_checkpoint")?.toString())
+
+        val incomingMutations = mutableListOf<IncomingMutation>()
+        val incomingArray = responseJson.optJSONArray("incoming_mutations") ?: JSONArray()
+        for (i in 0 until incomingArray.length()) {
+            val mutationJson = incomingArray.optJSONObject(i) ?: continue
+            val entityType = mutationJson.optString("entity_type")
+            val entityId = mutationJson.optString("entity_id")
+            val timestamp = mutationJson.optLong("timestamp")
+            val changedFields = parseStringMap(mutationJson.optJSONObject("changed_fields")?.toString())
+
+            changedFields.forEach { (fieldName, remoteValue) ->
+                val strategy = when (fieldName) {
+                    "quantity" -> "ADDITIVE"
+                    "assigned_driver_id" -> "MANUAL_OWNERSHIP"
+                    else -> "LWW"
+                }
+                incomingMutations += IncomingMutation(
+                    entityType = entityType,
+                    entityId = entityId,
+                    fieldName = fieldName,
+                    remoteValue = remoteValue,
+                    mergeStrategy = strategy,
+                    timestamp = timestamp,
+                )
+            }
+        }
+
+        ServerDeltaSyncResult(
+            syncedMutationIds = syncedIds,
+            incomingMutations = incomingMutations,
+            updatedCheckpoint = updatedCheckpoint,
+            message = responseJson.optString("message"),
+        )
+    }.getOrNull()
+}
+
+private fun parseLongMap(rawJson: String?): Map<String, Long> {
+    if (rawJson.isNullOrBlank()) {
+        return emptyMap()
+    }
+
+    return runCatching {
+        val jsonObject = JSONObject(rawJson)
+        val keys = jsonObject.keys()
+        val parsed = mutableMapOf<String, Long>()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            parsed[key] = jsonObject.optLong(key)
+        }
+        parsed
+    }.getOrDefault(emptyMap())
+}
+
+private fun parseStringMap(rawJson: String?): Map<String, String> {
+    if (rawJson.isNullOrBlank()) {
+        return emptyMap()
+    }
+
+    return runCatching {
+        val jsonObject = JSONObject(rawJson)
+        val keys = jsonObject.keys()
+        val parsed = mutableMapOf<String, String>()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            parsed[key] = jsonObject.optString(key)
+        }
+        parsed
+    }.getOrDefault(emptyMap())
 }
 
 private data class UserUi(
