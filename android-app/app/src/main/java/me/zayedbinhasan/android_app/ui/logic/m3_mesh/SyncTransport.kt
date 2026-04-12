@@ -1,8 +1,10 @@
-package me.zayedbinhasan.android_app.ui.logic
+package me.zayedbinhasan.android_app.ui.logic.m3_mesh
 
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import me.zayedbinhasan.android_app.data.local.repository.LocalRepository
+import me.zayedbinhasan.android_app.ui.logic.core.appendMutation
+import me.zayedbinhasan.android_app.ui.logic.m2_crdt.applyIncomingMutations
 import me.zayedbinhasan.android_app.ui.models.IncomingMutation
 import me.zayedbinhasan.data.Mutation_logs
 import org.json.JSONArray

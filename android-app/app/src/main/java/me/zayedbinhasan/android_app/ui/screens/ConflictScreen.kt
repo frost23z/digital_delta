@@ -18,10 +18,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import me.zayedbinhasan.android_app.data.local.repository.LocalRepository
-import me.zayedbinhasan.android_app.ui.logic.resolveConflictAction
-import me.zayedbinhasan.android_app.ui.logic.simulateRemoteOwnershipConflict
-import me.zayedbinhasan.android_app.ui.logic.simulateRemoteQuantityMerge
-import me.zayedbinhasan.android_app.ui.logic.simulateRemoteStatusMerge
+import me.zayedbinhasan.android_app.ui.logic.m2_crdt.resolveConflictAction
+import me.zayedbinhasan.android_app.ui.logic.m2_crdt.simulateRemoteOwnershipConflict
+import me.zayedbinhasan.android_app.ui.logic.m2_crdt.simulateRemoteQuantityMerge
+import me.zayedbinhasan.android_app.ui.logic.m2_crdt.simulateRemoteStatusMerge
 import me.zayedbinhasan.android_app.ui.models.ConflictUi
 
 @Composable

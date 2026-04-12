@@ -127,6 +127,7 @@ private object AppRoutes {
 internal const val DEFAULT_SYNC_PEER_ID = "sync-server-main"
 internal const val DEFAULT_SYNC_HTTP_BASE_URL = "http://10.0.2.2:8081"
 internal const val DEFAULT_LOCAL_NODE_ID = "android_client"
+internal const val DEFAULT_CHAOS_HTTP_BASE_URL = "http://10.0.2.2:5000"
 
 private val appDestinations = listOf(
     AppDestination(route = AppRoutes.DASHBOARD, title = "Dashboard", icon = Icons.Filled.Dashboard),

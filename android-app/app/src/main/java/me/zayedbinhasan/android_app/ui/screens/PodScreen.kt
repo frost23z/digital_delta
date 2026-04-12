@@ -23,8 +23,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import me.zayedbinhasan.android_app.auth.OfflineAuthManager
 import me.zayedbinhasan.android_app.data.local.repository.LocalRepository
-import me.zayedbinhasan.android_app.ui.logic.createSignedPodHandshake
-import me.zayedbinhasan.android_app.ui.logic.deleteReceipt
+import me.zayedbinhasan.android_app.ui.logic.m5_pod.createSignedPodHandshake
+import me.zayedbinhasan.android_app.ui.logic.m5_pod.deleteReceipt
 import me.zayedbinhasan.android_app.ui.models.ReceiptFullUi
 
 @Composable

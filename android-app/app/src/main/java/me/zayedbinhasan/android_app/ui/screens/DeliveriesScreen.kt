@@ -21,8 +21,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import me.zayedbinhasan.android_app.data.local.repository.LocalRepository
-import me.zayedbinhasan.android_app.ui.logic.deleteDelivery
-import me.zayedbinhasan.android_app.ui.logic.insertDemoDelivery
+import me.zayedbinhasan.android_app.ui.logic.m2_crdt.deleteDelivery
+import me.zayedbinhasan.android_app.ui.logic.m2_crdt.insertDemoDelivery
 import me.zayedbinhasan.android_app.ui.models.DeliveryFullUi
 
 @Composable

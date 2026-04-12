@@ -35,6 +35,9 @@ class LocalRepository(
     fun observeRoutes(): Flow<List<Routes>> =
         queries.selectAllRoutes().asFlow().mapToList(ioDispatcher)
 
+    fun allRoutesNow(): List<Routes> =
+        queries.selectAllRoutes().executeAsList()
+
     fun observeReceipts(): Flow<List<Receipts>> =
         queries.selectAllReceipts().asFlow().mapToList(ioDispatcher)
 
@@ -61,6 +64,9 @@ class LocalRepository(
 
     fun deliveryById(taskId: String): Deliveries? =
         queries.selectDeliveryById(taskId).executeAsOneOrNull()
+
+    fun allDeliveriesNow(): List<Deliveries> =
+        queries.selectAllDeliveries().executeAsList()
 
     fun syncCheckpointByPeer(peerId: String): Sync_checkpoints? =
         queries.selectSyncCheckpointByPeer(peerId).executeAsOneOrNull()

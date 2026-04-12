@@ -16,8 +16,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import me.zayedbinhasan.android_app.data.local.repository.LocalRepository
-import me.zayedbinhasan.android_app.ui.logic.deleteUser
-import me.zayedbinhasan.android_app.ui.logic.insertDemoUser
+import me.zayedbinhasan.android_app.ui.logic.m1_auth.deleteUser
+import me.zayedbinhasan.android_app.ui.logic.m1_auth.insertDemoUser
 import me.zayedbinhasan.android_app.ui.models.DeliveryUi
 import me.zayedbinhasan.android_app.ui.models.ReceiptUi
 import me.zayedbinhasan.android_app.ui.models.RouteUi
