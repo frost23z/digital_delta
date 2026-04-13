@@ -16,7 +16,7 @@ internal fun insertDemoDelivery(repository: LocalRepository) {
         destinationId = "camp-03",
         priority = "P1_HIGH",
         deadlineTimestamp = now + 3_600_000,
-        assignedDriverId = "driver-07",
+        assignedDriverId = "vehicle:TRUCK",
         status = "PENDING",
         updatedAt = now,
     )
@@ -32,7 +32,7 @@ internal fun insertDemoDelivery(repository: LocalRepository) {
                 "origin_id" to "warehouse-01",
                 "destination_id" to "camp-03",
                 "priority" to "P1_HIGH",
-                "assigned_driver_id" to "driver-07",
+                "assigned_driver_id" to "vehicle:TRUCK",
                 "status" to "PENDING",
             ),
         ),

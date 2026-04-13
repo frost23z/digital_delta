@@ -7,11 +7,14 @@ import org.json.JSONObject
 internal data class TriageImpact(
     val preemptedLowPriorityCount: Int,
     val reroutedHighPriorityCount: Int,
+    val evaluatedDeliveryCount: Int,
+    val scopeMode: String,
 )
 
 internal fun applyTriagePreemption(
     repository: LocalRepository,
     routeId: String,
+    routeVehicle: String,
     previousDurationMins: Long,
     recomputedDurationMins: Long,
     blocked: Boolean,
@@ -19,8 +22,19 @@ internal fun applyTriagePreemption(
 ): TriageImpact {
     val deliveries = repository.allDeliveriesNow()
     if (deliveries.isEmpty()) {
-        return TriageImpact(preemptedLowPriorityCount = 0, reroutedHighPriorityCount = 0)
+        return TriageImpact(
+            preemptedLowPriorityCount = 0,
+            reroutedHighPriorityCount = 0,
+            evaluatedDeliveryCount = 0,
+            scopeMode = "NO_DELIVERIES",
+        )
     }
+
+    val (deliveriesInScope, scopeMode) = resolveDeliveriesInScope(
+        deliveries = deliveries,
+        routeId = routeId,
+        routeVehicle = routeVehicle,
+    )
 
     val etaIncreaseRatio = if (previousDurationMins <= 0L) {
         0.0
@@ -32,7 +46,7 @@ internal fun applyTriagePreemption(
     var reroutedHighPriorityCount = 0
     val now = System.currentTimeMillis()
 
-    deliveries.forEach { delivery ->
+    deliveriesInScope.forEach { delivery ->
         val priorityBand = normalizePriorityBand(delivery.priority)
         val slaMins = slaMinutesForPriority(priorityBand)
         val exceedsSla = recomputedDurationMins > slaMins
@@ -70,6 +84,9 @@ internal fun applyTriagePreemption(
             operationType = operationType,
             changedFieldsJson = JSONObject().apply {
                 put("route_id", routeId)
+                put("route_vehicle", routeVehicle)
+                put("scope_mode", scopeMode)
+                put("scoped_delivery_count", deliveriesInScope.size)
                 put("priority", priorityBand)
                 put("sla_mins", slaMins)
                 put("previous_duration_mins", previousDurationMins)
@@ -91,7 +108,30 @@ internal fun applyTriagePreemption(
     return TriageImpact(
         preemptedLowPriorityCount = preemptedLowPriorityCount,
         reroutedHighPriorityCount = reroutedHighPriorityCount,
+        evaluatedDeliveryCount = deliveriesInScope.size,
+        scopeMode = scopeMode,
     )
+}
+
+private fun resolveDeliveriesInScope(
+    deliveries: List<me.zayedbinhasan.data.Deliveries>,
+    routeId: String,
+    routeVehicle: String,
+): Pair<List<me.zayedbinhasan.data.Deliveries>, String> {
+    val normalizedVehicle = routeVehicle.uppercase()
+    val routeScoped = deliveries.filter { delivery ->
+        val assignee = delivery.assigned_driver_id?.trim().orEmpty()
+        assignee == routeId ||
+            assignee == "route:$routeId" ||
+            assignee == normalizedVehicle ||
+            assignee == "vehicle:$normalizedVehicle"
+    }
+
+    return if (routeScoped.isNotEmpty()) {
+        routeScoped to "ROUTE_SCOPED"
+    } else {
+        deliveries to "GLOBAL_FALLBACK"
+    }
 }
 
 internal fun normalizePriorityBand(priorityRaw: String): String {

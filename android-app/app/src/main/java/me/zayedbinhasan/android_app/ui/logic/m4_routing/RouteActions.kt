@@ -63,8 +63,11 @@ internal data class RouteRefreshSummary(
     val blockedRouteCount: Int,
     val preemptedLowPriorityCount: Int,
     val reroutedHighPriorityCount: Int,
+    val triageEvaluatedDeliveryCount: Int,
+    val triageFallbackRouteCount: Int,
     val reasonCode: String,
     val recomputedAt: Long,
+    val recomputeLatencyMs: Long,
     val detail: String,
 )
 
@@ -86,15 +89,19 @@ internal fun refreshRoutesFromChaos(
     repository: LocalRepository,
     chaosBaseUrl: String,
 ): RouteRefreshSummary {
-    val now = System.currentTimeMillis()
+    val startedAt = System.currentTimeMillis()
+    val now = startedAt
     val edges = fetchChaosEdges(chaosBaseUrl) ?: return RouteRefreshSummary(
         success = false,
         changedRouteCount = 0,
         blockedRouteCount = 0,
         preemptedLowPriorityCount = 0,
         reroutedHighPriorityCount = 0,
+        triageEvaluatedDeliveryCount = 0,
+        triageFallbackRouteCount = 0,
         reasonCode = "CHAOS_UNAVAILABLE",
         recomputedAt = now,
+        recomputeLatencyMs = System.currentTimeMillis() - startedAt,
         detail = "Cannot fetch $chaosBaseUrl/api/network/status",
     )
 
@@ -110,8 +117,11 @@ internal fun refreshRoutesFromChaos(
             blockedRouteCount = 0,
             preemptedLowPriorityCount = 0,
             reroutedHighPriorityCount = 0,
+            triageEvaluatedDeliveryCount = 0,
+            triageFallbackRouteCount = 0,
             reasonCode = "NO_ROUTES",
             recomputedAt = now,
+            recomputeLatencyMs = System.currentTimeMillis() - startedAt,
             detail = "No routes available",
         )
     }
@@ -121,6 +131,8 @@ internal fun refreshRoutesFromChaos(
     var blockedRouteCount = 0
     var preemptedLowPriorityCount = 0
     var reroutedHighPriorityCount = 0
+    var triageEvaluatedDeliveryCount = 0
+    var triageFallbackRouteCount = 0
     var summaryReason = "NO_CHANGE"
 
     routeRows.forEach { route ->
@@ -168,6 +180,7 @@ internal fun refreshRoutesFromChaos(
             val triageImpact = applyTriagePreemption(
                 repository = repository,
                 routeId = route.route_id,
+                routeVehicle = route.vehicle,
                 previousDurationMins = route.total_duration_mins,
                 recomputedDurationMins = route.total_duration_mins,
                 blocked = true,
@@ -175,6 +188,10 @@ internal fun refreshRoutesFromChaos(
             )
             preemptedLowPriorityCount += triageImpact.preemptedLowPriorityCount
             reroutedHighPriorityCount += triageImpact.reroutedHighPriorityCount
+            triageEvaluatedDeliveryCount += triageImpact.evaluatedDeliveryCount
+            if (triageImpact.scopeMode == "GLOBAL_FALLBACK") {
+                triageFallbackRouteCount += 1
+            }
             return@forEach
         }
 
@@ -227,6 +244,7 @@ internal fun refreshRoutesFromChaos(
         val triageImpact = applyTriagePreemption(
             repository = repository,
             routeId = route.route_id,
+            routeVehicle = route.vehicle,
             previousDurationMins = route.total_duration_mins,
             recomputedDurationMins = recomputed.totalDurationMins,
             blocked = false,
@@ -234,6 +252,10 @@ internal fun refreshRoutesFromChaos(
         )
         preemptedLowPriorityCount += triageImpact.preemptedLowPriorityCount
         reroutedHighPriorityCount += triageImpact.reroutedHighPriorityCount
+        triageEvaluatedDeliveryCount += triageImpact.evaluatedDeliveryCount
+        if (triageImpact.scopeMode == "GLOBAL_FALLBACK") {
+            triageFallbackRouteCount += 1
+        }
     }
 
     val finalReason = when {
@@ -249,9 +271,12 @@ internal fun refreshRoutesFromChaos(
         blockedRouteCount = blockedRouteCount,
         preemptedLowPriorityCount = preemptedLowPriorityCount,
         reroutedHighPriorityCount = reroutedHighPriorityCount,
+        triageEvaluatedDeliveryCount = triageEvaluatedDeliveryCount,
+        triageFallbackRouteCount = triageFallbackRouteCount,
         reasonCode = finalReason,
         recomputedAt = now,
-        detail = "Routes=${routeRows.size}, changed=$changedRouteCount, blocked=$blockedRouteCount",
+        recomputeLatencyMs = System.currentTimeMillis() - startedAt,
+        detail = "Routes=${routeRows.size}, changed=$changedRouteCount, blocked=$blockedRouteCount, triage_scoped=$triageEvaluatedDeliveryCount",
     )
 }
 
