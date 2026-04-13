@@ -40,9 +40,12 @@ import me.zayedbinhasan.android_app.ui.core.DEFAULT_SYNC_HTTP_BASE_URL
 import me.zayedbinhasan.android_app.ui.core.DEFAULT_SYNC_PEER_ID
 import me.zayedbinhasan.android_app.ui.core.OfflineFallbackPanel
 import me.zayedbinhasan.android_app.ui.core.OperationalStatusStrip
+import me.zayedbinhasan.android_app.ui.core.RbacCapability
 import me.zayedbinhasan.android_app.ui.core.StatusChipState
 import me.zayedbinhasan.android_app.ui.core.StatusTone
 import me.zayedbinhasan.android_app.ui.core.UiSizeClass
+import me.zayedbinhasan.android_app.ui.core.allowedRolesLabel
+import me.zayedbinhasan.android_app.ui.core.isRoleAllowed
 import me.zayedbinhasan.android_app.ui.logic.m2_crdt.applyIncomingMutationBatch
 import me.zayedbinhasan.android_app.ui.logic.m2_crdt.applyIncomingMutations
 import me.zayedbinhasan.android_app.ui.logic.m2_crdt.simulateSyncWithPeer
@@ -63,12 +66,16 @@ private const val DEFAULT_WIFI_HOST = "192.168.68.131"
 private const val DEFAULT_WIFI_SYNC_HTTP_BASE_URL = "http://$DEFAULT_WIFI_HOST:8081"
 
 @Composable
-internal fun SyncStatusScreen(repository: LocalRepository) {
+internal fun SyncStatusScreen(
+    repository: LocalRepository,
+    activeRole: String,
+) {
     val uiMetrics = rememberUiMetrics()
     val peerId = DEFAULT_SYNC_PEER_ID
     val localNodeId = DEFAULT_LOCAL_NODE_ID
     val coroutineScope = rememberCoroutineScope()
     val runningOnEmulator = remember { isLikelyEmulator() }
+    val canTriggerServerSync = isRoleAllowed(activeRole, RbacCapability.SERVER_SYNC)
 
     var syncInProgress by rememberSaveable { mutableStateOf(false) }
     var syncMessage by rememberSaveable { mutableStateOf("Idle") }
@@ -241,6 +248,10 @@ internal fun SyncStatusScreen(repository: LocalRepository) {
                     "Transport Compliance: ${if (useHttpDevFallback) "NON_COMPLIANT (HTTP JSON DEV FALLBACK)" else "COMPLIANT (gRPC + Protobuf)"}",
                     fontWeight = FontWeight.Bold,
                 )
+                if (!canTriggerServerSync) {
+                    Text("Server sync trigger locked for role: ${activeRole.replace('_', ' ')}")
+                    Text("Allowed roles: ${allowedRolesLabel(RbacCapability.SERVER_SYNC)}")
+                }
                 if (useHttpDevFallback) {
                     Text("Warning: DEV fallback is active and does not satisfy C1 requirements.")
                 }
@@ -366,7 +377,7 @@ internal fun SyncStatusScreen(repository: LocalRepository) {
                     modifier = Modifier
                         .heightIn(min = uiMetrics.controlMinHeight)
                         .semantics { contentDescription = "Run server sync" },
-                    enabled = !syncInProgress,
+                    enabled = !syncInProgress && canTriggerServerSync,
                 ) {
                     Text(if (syncInProgress) "Syncing..." else "Sync Now (Server)")
                 }

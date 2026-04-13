@@ -1,5 +1,9 @@
 package me.zayedbinhasan.android_app.ui.core
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -21,7 +25,6 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -32,10 +35,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -63,6 +68,7 @@ import me.zayedbinhasan.android_app.ui.screens.ProfileScreen
 import me.zayedbinhasan.android_app.ui.screens.RoutesScreen
 import me.zayedbinhasan.android_app.ui.screens.SyncStatusScreen
 import me.zayedbinhasan.android_app.ui.theme.AndroidappTheme
+import kotlinx.coroutines.launch
 
 @Composable
 fun DigitalDeltaApp() {
@@ -124,7 +130,6 @@ private data class AppDestination(
     val route: String,
     val title: String,
     val navLabel: String,
-    val emoji: String,
     val icon: ImageVector,
 )
 
@@ -146,11 +151,11 @@ internal const val DEFAULT_LOCAL_NODE_ID = "android_client"
 internal const val DEFAULT_CHAOS_HTTP_BASE_URL = "http://10.0.2.2:5000"
 
 private val appDestinations = listOf(
-    AppDestination(route = AppRoutes.DASHBOARD, title = "Dashboard", navLabel = "🏠 Home", emoji = "🏠", icon = Icons.Filled.Dashboard),
-    AppDestination(route = AppRoutes.DELIVERIES, title = "Deliveries", navLabel = "📦 Delivery", emoji = "📦", icon = Icons.Filled.Inventory2),
-    AppDestination(route = AppRoutes.ROUTE, title = "Route", navLabel = "🧭 Route", emoji = "🧭", icon = Icons.Filled.Directions),
-    AppDestination(route = AppRoutes.POD, title = "PoD", navLabel = "✅ PoD", emoji = "✅", icon = Icons.Filled.QrCodeScanner),
-    AppDestination(route = AppRoutes.SYNC_STATUS, title = "Sync Status", navLabel = "🔄 Sync", emoji = "🔄", icon = Icons.Filled.Sync),
+    AppDestination(route = AppRoutes.DASHBOARD, title = "Dashboard", navLabel = "Home", icon = Icons.Filled.Dashboard),
+    AppDestination(route = AppRoutes.DELIVERIES, title = "Deliveries", navLabel = "Deliveries", icon = Icons.Filled.Inventory2),
+    AppDestination(route = AppRoutes.ROUTE, title = "Route", navLabel = "Route", icon = Icons.Filled.Directions),
+    AppDestination(route = AppRoutes.POD, title = "PoD", navLabel = "PoD", icon = Icons.Filled.QrCodeScanner),
+    AppDestination(route = AppRoutes.SYNC_STATUS, title = "Sync Status", navLabel = "Sync", icon = Icons.Filled.Sync),
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -163,6 +168,7 @@ private fun AuthenticatedShell(
 ) {
     val uiMetrics = rememberUiMetrics()
     val navController = rememberNavController()
+    val isOnline = rememberNetworkOnlineState()
     val openConflictCount by remember(repository) {
         repository.observeOpenConflictCount()
     }.collectAsState(initial = 0L)
@@ -175,10 +181,10 @@ private fun AuthenticatedShell(
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route ?: appDestinations.first().route
     val currentTitle = when (currentRoute) {
-        AppRoutes.CONFLICTS -> "⚠️ Conflicts"
-        AppRoutes.PROFILE -> "👤 Profile"
+        AppRoutes.CONFLICTS -> "Conflicts"
+        AppRoutes.PROFILE -> "Profile"
         else -> appDestinations.firstOrNull { it.route == currentRoute }
-            ?.let { "${it.emoji} ${it.title}" }
+            ?.title
             ?: "Digital Delta"
     }
     Scaffold(
@@ -196,9 +202,17 @@ private fun AuthenticatedShell(
                             style = MaterialTheme.typography.titleMedium,
                         )
                         Text(
-                            text = "Digital Delta Operations",
+                            text = if (isOnline) {
+                                "Digital Delta Operations · Online"
+                            } else {
+                                "Digital Delta Operations · Offline"
+                            },
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
+                            color = if (isOnline) {
+                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
+                            } else {
+                                MaterialTheme.colorScheme.error
+                            },
                         )
                     }
                 },
@@ -253,13 +267,28 @@ private fun AuthenticatedShell(
                 .padding(horizontal = uiMetrics.horizontalPadding),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            SessionStatusHeader(
-                role = session.role,
-                authMode = session.authMode,
-                openConflictCount = openConflictCount,
-                pendingMutationCount = pendingMutationsRaw.size,
-                verifiedReceiptCount = receiptsRaw.count { it.verified },
-            )
+            if (currentRoute != AppRoutes.DASHBOARD && (
+                    !isOnline ||
+                        pendingMutationsRaw.isNotEmpty() ||
+                        openConflictCount > 0L
+                    )) {
+                RouteStateSnapshotRail(
+                    isOnline = isOnline,
+                    pendingMutationCount = pendingMutationsRaw.size,
+                    openConflictCount = openConflictCount,
+                    verifiedReceiptCount = receiptsRaw.count { it.verified },
+                )
+            }
+            if (currentRoute == AppRoutes.DASHBOARD) {
+                SessionStatusHeader(
+                    role = session.role,
+                    authMode = session.authMode,
+                    isOnline = isOnline,
+                    openConflictCount = openConflictCount,
+                    pendingMutationCount = pendingMutationsRaw.size,
+                    verifiedReceiptCount = receiptsRaw.count { it.verified },
+                )
+            }
             AppNavHost(
                 repository = repository,
                 authManager = authManager,
@@ -295,7 +324,7 @@ private fun BottomNavigationBar(
                     onClick = {
                         navigateToPrimaryRoute(navController, destination.route)
                     },
-                    alwaysShowLabel = false,
+                    alwaysShowLabel = true,
                     label = { Text(destination.navLabel) },
                     icon = {
                         Icon(
@@ -340,11 +369,40 @@ private fun navigateToPrimaryRoute(
 private fun SessionStatusHeader(
     role: String,
     authMode: String,
+    isOnline: Boolean,
     openConflictCount: Long,
     pendingMutationCount: Int,
     verifiedReceiptCount: Int,
 ) {
     val uiMetrics = rememberUiMetrics()
+    val incident = when {
+        !isOnline -> Triple(
+            "Offline Mode Active",
+            "All actions are stored locally; sync is paused until validated network returns.",
+            MaterialTheme.colorScheme.error,
+        )
+        openConflictCount > 0L -> Triple(
+            "Conflict Triage Required",
+            "$openConflictCount conflict(s) need operator decision before full convergence.",
+            MaterialTheme.colorScheme.tertiary,
+        )
+        pendingMutationCount > 0 -> Triple(
+            "Sync Queue In Progress",
+            "$pendingMutationCount local mutation(s) are waiting to replicate.",
+            MaterialTheme.colorScheme.primary,
+        )
+        verifiedReceiptCount > 0 -> Triple(
+            "Verified Evidence Available",
+            "$verifiedReceiptCount signed PoD receipt(s) are locally verifiable.",
+            MaterialTheme.colorScheme.primary,
+        )
+        else -> Triple(
+            "System Ready",
+            "No active conflict or sync backlog detected.",
+            MaterialTheme.colorScheme.primary,
+        )
+    }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -357,12 +415,36 @@ private fun SessionStatusHeader(
             Text("Role: ${role.replace('_', ' ')}", fontWeight = FontWeight.Bold)
             Text("Auth: ${authMode.replace('_', ' ')}")
             Text("Open conflicts: $openConflictCount")
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = incident.third.copy(alpha = 0.12f),
+                ),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        text = "Operational Priority: ${incident.first}",
+                        color = incident.third,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                    Text(
+                        text = incident.second,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f),
+                    )
+                }
+            }
             OperationalStatusStrip(
                 items = listOf(
-                    StatusChipState(label = "OFFLINE", detail = "READY", tone = StatusTone.OFFLINE),
+                    StatusChipState(label = "OFFLINE", detail = if (isOnline) "ONLINE" else "OFFLINE", tone = StatusTone.OFFLINE),
                     StatusChipState(
                         label = "SYNCING",
-                        detail = if (pendingMutationCount > 0) "QUEUED:$pendingMutationCount" else "IDLE",
+                        detail = if (!isOnline) "WAIT_NET" else if (pendingMutationCount > 0) "QUEUED:$pendingMutationCount" else "IDLE",
                         tone = StatusTone.SYNC,
                     ),
                     StatusChipState(
@@ -379,6 +461,112 @@ private fun SessionStatusHeader(
             )
         }
     }
+}
+
+@Composable
+private fun RouteStateSnapshotRail(
+    isOnline: Boolean,
+    pendingMutationCount: Int,
+    openConflictCount: Long,
+    verifiedReceiptCount: Int,
+) {
+    val title = when {
+        !isOnline -> "Offline mode active"
+        openConflictCount > 0L -> "Conflict attention needed"
+        pendingMutationCount > 0 -> "Sync queue pending"
+        else -> "System active"
+    }
+    val detail = "Net ${if (isOnline) "ONLINE" else "OFFLINE"} · Sync ${if (!isOnline) "WAIT_NET" else if (pendingMutationCount > 0) "QUEUED:$pendingMutationCount" else "IDLE"} · Conflict ${if (openConflictCount > 0L) "OPEN:$openConflictCount" else "NONE"} · Verified ${if (verifiedReceiptCount > 0) "POD:$verifiedReceiptCount" else "NONE"}"
+    val toneColor = when {
+        !isOnline -> MaterialTheme.colorScheme.error
+        openConflictCount > 0L -> MaterialTheme.colorScheme.tertiary
+        pendingMutationCount > 0 -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.primary
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = toneColor.copy(alpha = 0.12f),
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = title,
+                color = toneColor,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun rememberNetworkOnlineState(): Boolean {
+    val context = LocalContext.current
+    val connectivityManager = remember(context) {
+        context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    }
+    var isOnline by remember { mutableStateOf(connectivityManager.isCurrentlyOnline()) }
+    val coroutineScope = rememberCoroutineScope()
+
+    DisposableEffect(connectivityManager) {
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                coroutineScope.launch {
+                    isOnline = true
+                }
+            }
+
+            override fun onLost(network: Network) {
+                coroutineScope.launch {
+                    isOnline = connectivityManager.isCurrentlyOnline()
+                }
+            }
+
+            override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+                val validated = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                    networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                coroutineScope.launch {
+                    isOnline = validated
+                }
+            }
+
+            override fun onUnavailable() {
+                coroutineScope.launch {
+                    isOnline = false
+                }
+            }
+        }
+
+        runCatching {
+            connectivityManager.registerDefaultNetworkCallback(callback)
+        }
+
+        onDispose {
+            runCatching {
+                connectivityManager.unregisterNetworkCallback(callback)
+            }
+        }
+    }
+
+    return isOnline
+}
+
+private fun ConnectivityManager.isCurrentlyOnline(): Boolean {
+    val active = activeNetwork ?: return false
+    val capabilities = getNetworkCapabilities(active) ?: return false
+    return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
 }
 
 @Composable
@@ -399,7 +587,10 @@ private fun AppNavHost(
             DashboardScreen(repository = repository)
         }
         composable(AppRoutes.DELIVERIES) {
-            DeliveriesScreen(repository = repository)
+            DeliveriesScreen(
+                repository = repository,
+                activeRole = session.role,
+            )
         }
         composable(AppRoutes.ROUTE) {
             RoutesScreen(
@@ -418,11 +609,15 @@ private fun AppNavHost(
             )
         }
         composable(AppRoutes.SYNC_STATUS) {
-            SyncStatusScreen(repository = repository)
+            SyncStatusScreen(
+                repository = repository,
+                activeRole = session.role,
+            )
         }
         composable(AppRoutes.CONFLICTS) {
             ConflictScreen(
                 repository = repository,
+                activeRole = session.role,
                 onGoDashboard = {
                     navigateToPrimaryRoute(navController, AppRoutes.DASHBOARD)
                 },

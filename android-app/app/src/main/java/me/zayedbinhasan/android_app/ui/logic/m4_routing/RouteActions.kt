@@ -1,6 +1,8 @@
 package me.zayedbinhasan.android_app.ui.logic.m4_routing
 
 import me.zayedbinhasan.android_app.data.local.repository.LocalRepository
+import me.zayedbinhasan.android_app.ui.core.RbacCapability
+import me.zayedbinhasan.android_app.ui.core.isRoleAllowed
 import me.zayedbinhasan.android_app.ui.logic.core.appendMutation
 import me.zayedbinhasan.android_app.ui.logic.m6_triage.applyTriagePreemption
 import org.json.JSONArray
@@ -11,7 +13,7 @@ import java.nio.charset.StandardCharsets
 import java.util.UUID
 
 internal fun canManageRouteActions(role: String): Boolean {
-    return role == "SUPPLY_MANAGER" || role == "CAMP_COMMANDER" || role == "SYNC_ADMIN"
+    return isRoleAllowed(role, RbacCapability.ROUTE_MANAGE)
 }
 
 internal fun insertDemoRoute(repository: LocalRepository, vehicle: String = "TRUCK") {

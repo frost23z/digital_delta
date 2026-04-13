@@ -28,19 +28,24 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import me.zayedbinhasan.android_app.data.local.repository.LocalRepository
 import me.zayedbinhasan.android_app.ui.core.OfflineFallbackPanel
-import me.zayedbinhasan.android_app.ui.core.OperationalStatusStrip
-import me.zayedbinhasan.android_app.ui.core.StatusChipState
-import me.zayedbinhasan.android_app.ui.core.StatusTone
+import me.zayedbinhasan.android_app.ui.core.RbacCapability
 import me.zayedbinhasan.android_app.ui.core.UiSizeClass
+import me.zayedbinhasan.android_app.ui.core.allowedRolesLabel
+import me.zayedbinhasan.android_app.ui.core.isRoleAllowed
 import me.zayedbinhasan.android_app.ui.core.rememberUiMetrics
 import me.zayedbinhasan.android_app.ui.logic.m2_crdt.deleteDelivery
 import me.zayedbinhasan.android_app.ui.logic.m2_crdt.insertDemoDelivery
 import me.zayedbinhasan.android_app.ui.models.DeliveryFullUi
 
 @Composable
-internal fun DeliveriesScreen(repository: LocalRepository) {
+internal fun DeliveriesScreen(
+    repository: LocalRepository,
+    activeRole: String,
+) {
     val uiMetrics = rememberUiMetrics()
     var selectedDeliveryId by rememberSaveable { mutableStateOf<String?>(null) }
+    val canCreateDelivery = isRoleAllowed(activeRole, RbacCapability.DELIVERY_CREATE)
+    val canDeleteDelivery = isRoleAllowed(activeRole, RbacCapability.DELIVERY_DELETE)
 
     val deliveriesRaw by remember(repository) {
         repository.observeDeliveries()
@@ -48,14 +53,6 @@ internal fun DeliveriesScreen(repository: LocalRepository) {
 
     val pendingMutationsRaw by remember(repository) {
         repository.observePendingMutations()
-    }.collectAsState(initial = emptyList())
-
-    val openConflictCount by remember(repository) {
-        repository.observeOpenConflictCount()
-    }.collectAsState(initial = 0L)
-
-    val receiptsRaw by remember(repository) {
-        repository.observeReceipts()
     }.collectAsState(initial = emptyList())
 
     val deliveries = deliveriesRaw.map { row ->
@@ -88,38 +85,30 @@ internal fun DeliveriesScreen(repository: LocalRepository) {
         }
 
         item {
-            OperationalStatusStrip(
-                items = listOf(
-                    StatusChipState(label = "OFFLINE", detail = "READY", tone = StatusTone.OFFLINE),
-                    StatusChipState(
-                        label = "SYNCING",
-                        detail = if (pendingMutationsRaw.isNotEmpty()) "QUEUED:${pendingMutationsRaw.size}" else "IDLE",
-                        tone = StatusTone.SYNC,
-                    ),
-                    StatusChipState(
-                        label = "CONFLICT",
-                        detail = if (openConflictCount > 0L) "OPEN:$openConflictCount" else "NONE",
-                        tone = StatusTone.CONFLICT,
-                    ),
-                    StatusChipState(
-                        label = "VERIFIED",
-                        detail = if (receiptsRaw.any { it.verified }) "POD_OK" else "PENDING",
-                        tone = StatusTone.VERIFIED,
-                    ),
-                ),
-            )
-        }
-
-        item {
             OfflineFallbackPanel(
                 title = "Offline delivery workflow",
                 guidance = "You can create and manage delivery records locally. Pending changes will sync later.",
             )
         }
 
+        if (!canCreateDelivery || !canDeleteDelivery) {
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("RBAC Demo", fontWeight = FontWeight.Bold)
+                        Text("Current role: ${activeRole.replace('_', ' ')}")
+                        Text("Create delivery: ${if (canCreateDelivery) "ALLOWED" else "DENIED"}")
+                        Text("Delete delivery: ${if (canDeleteDelivery) "ALLOWED" else "DENIED"}")
+                        Text("Delete roles: ${allowedRolesLabel(RbacCapability.DELIVERY_DELETE)}")
+                    }
+                }
+            }
+        }
+
         item {
             Button(
                 onClick = { insertDemoDelivery(repository) },
+                enabled = canCreateDelivery,
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = uiMetrics.controlMinHeight)
@@ -171,6 +160,7 @@ internal fun DeliveriesScreen(repository: LocalRepository) {
                         }
                         Button(
                             onClick = { deleteDelivery(repository, delivery.taskId) },
+                            enabled = canDeleteDelivery,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .heightIn(min = uiMetrics.controlMinHeight),
@@ -192,6 +182,7 @@ internal fun DeliveriesScreen(repository: LocalRepository) {
                             }
                             Button(
                                 onClick = { deleteDelivery(repository, delivery.taskId) },
+                                enabled = canDeleteDelivery,
                                 modifier = Modifier
                                     .weight(1f)
                                     .heightIn(min = uiMetrics.controlMinHeight),
