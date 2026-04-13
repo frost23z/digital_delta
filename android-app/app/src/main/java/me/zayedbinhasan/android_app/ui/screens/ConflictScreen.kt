@@ -24,11 +24,11 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import me.zayedbinhasan.android_app.data.local.repository.LocalRepository
+import me.zayedbinhasan.android_app.ui.core.RbacCapability
 import me.zayedbinhasan.android_app.ui.core.OfflineFallbackPanel
-import me.zayedbinhasan.android_app.ui.core.OperationalStatusStrip
-import me.zayedbinhasan.android_app.ui.core.StatusChipState
-import me.zayedbinhasan.android_app.ui.core.StatusTone
 import me.zayedbinhasan.android_app.ui.core.UiSizeClass
+import me.zayedbinhasan.android_app.ui.core.allowedRolesLabel
+import me.zayedbinhasan.android_app.ui.core.isRoleAllowed
 import me.zayedbinhasan.android_app.ui.logic.m2_crdt.resolveConflictAction
 import me.zayedbinhasan.android_app.ui.logic.m2_crdt.simulateRemoteOwnershipConflict
 import me.zayedbinhasan.android_app.ui.logic.m2_crdt.simulateRemoteQuantityMerge
@@ -39,10 +39,12 @@ import me.zayedbinhasan.android_app.ui.core.rememberUiMetrics
 @Composable
 internal fun ConflictScreen(
     repository: LocalRepository,
+    activeRole: String,
     onGoDashboard: (() -> Unit)? = null,
     onGoRoute: (() -> Unit)? = null,
 ) {
     val uiMetrics = rememberUiMetrics()
+    val canResolveConflicts = isRoleAllowed(activeRole, RbacCapability.CONFLICT_RESOLVE)
     val conflictsRaw by remember(repository) {
         repository.observeOpenConflicts()
     }.collectAsState(initial = emptyList())
@@ -74,21 +76,6 @@ internal fun ConflictScreen(
         }
 
         item {
-            OperationalStatusStrip(
-                items = listOf(
-                    StatusChipState(label = "OFFLINE", detail = "READY", tone = StatusTone.OFFLINE),
-                    StatusChipState(label = "SYNCING", detail = "IDLE", tone = StatusTone.SYNC),
-                    StatusChipState(
-                        label = "CONFLICT",
-                        detail = if (conflicts.isNotEmpty()) "OPEN:${conflicts.size}" else "NONE",
-                        tone = StatusTone.CONFLICT,
-                    ),
-                    StatusChipState(label = "VERIFIED", detail = "RULES", tone = StatusTone.INFO),
-                ),
-            )
-        }
-
-        item {
             OfflineFallbackPanel(
                 title = "Offline conflict handling",
                 guidance = "Conflict review and resolution are local-first. Resolve now and sync resolution events when network is available.",
@@ -100,6 +87,10 @@ internal fun ConflictScreen(
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Open Conflicts: ${conflicts.size}")
                     Text("Merge rules: LWW for scalars, additive for quantities, manual for ownership")
+                    if (!canResolveConflicts) {
+                        Text("Resolve actions are locked for role: ${activeRole.replace('_', ' ')}")
+                        Text("Allowed roles: ${allowedRolesLabel(RbacCapability.CONFLICT_RESOLVE)}")
+                    }
 
                     if (onGoDashboard != null || onGoRoute != null) {
                         if (uiMetrics.sizeClass == UiSizeClass.COMPACT) {
@@ -223,6 +214,7 @@ internal fun ConflictScreen(
                     Text(if (conflict.manualRequired) "Badge: CONFLICT_DETECTED" else "Badge: AUTO_MERGED")
                     Button(
                         onClick = { resolveConflictAction(repository, conflict, "ACCEPT_LOCAL") },
+                        enabled = canResolveConflicts,
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = uiMetrics.controlMinHeight)
@@ -232,6 +224,7 @@ internal fun ConflictScreen(
                     }
                     Button(
                         onClick = { resolveConflictAction(repository, conflict, "ACCEPT_REMOTE") },
+                        enabled = canResolveConflicts,
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = uiMetrics.controlMinHeight)
@@ -241,6 +234,7 @@ internal fun ConflictScreen(
                     }
                     Button(
                         onClick = { resolveConflictAction(repository, conflict, "MERGE_MANUAL") },
+                        enabled = canResolveConflicts,
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = uiMetrics.controlMinHeight)

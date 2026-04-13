@@ -2,12 +2,14 @@ package me.zayedbinhasan.android_app.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Text
@@ -88,87 +90,98 @@ internal fun DashboardScreen(repository: LocalRepository) {
         ReceiptUi(receiptId = row.receipt_id, deliveryId = row.delivery_id, verified = row.verified)
     }
 
-    Column(
+    LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = uiMetrics.horizontalPadding, vertical = 16.dp)
             .widthIn(max = uiMetrics.contentMaxWidth),
+        contentPadding = PaddingValues(bottom = 18.dp),
         verticalArrangement = Arrangement.spacedBy(uiMetrics.sectionSpacing),
     ) {
-        Text("Mission Overview", fontWeight = FontWeight.Bold)
+        item {
+            Text("Mission Overview", fontWeight = FontWeight.Bold)
+        }
 
-        OperationalStatusStrip(
-            items = listOf(
-                StatusChipState(label = "OFFLINE", detail = "READY", tone = StatusTone.OFFLINE),
-                StatusChipState(
-                    label = "SYNCING",
-                    detail = if (pendingMutationsRaw.isNotEmpty()) "QUEUED:${pendingMutationsRaw.size}" else "IDLE",
-                    tone = StatusTone.SYNC,
+        item {
+            OperationalStatusStrip(
+                items = listOf(
+                    StatusChipState(label = "OFFLINE", detail = "READY", tone = StatusTone.OFFLINE),
+                    StatusChipState(
+                        label = "SYNCING",
+                        detail = if (pendingMutationsRaw.isNotEmpty()) "QUEUED:${pendingMutationsRaw.size}" else "IDLE",
+                        tone = StatusTone.SYNC,
+                    ),
+                    StatusChipState(
+                        label = "CONFLICT",
+                        detail = if (openConflictCount > 0L) "OPEN:$openConflictCount" else "NONE",
+                        tone = StatusTone.CONFLICT,
+                    ),
+                    StatusChipState(
+                        label = "VERIFIED",
+                        detail = if (receipts.count { it.verified } > 0) "POD:${receipts.count { it.verified }}" else "NONE",
+                        tone = StatusTone.VERIFIED,
+                    ),
                 ),
-                StatusChipState(
-                    label = "CONFLICT",
-                    detail = if (openConflictCount > 0L) "OPEN:$openConflictCount" else "NONE",
-                    tone = StatusTone.CONFLICT,
-                ),
-                StatusChipState(
-                    label = "VERIFIED",
-                    detail = if (receipts.count { it.verified } > 0) "POD:${receipts.count { it.verified }}" else "NONE",
-                    tone = StatusTone.VERIFIED,
-                ),
-            ),
-        )
+            )
+        }
 
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (uiMetrics.sizeClass == me.zayedbinhasan.android_app.ui.core.UiSizeClass.COMPACT) {
-                    Text("Profiles: ${users.size}")
-                    Text("Deliveries: ${deliveries.size}")
-                    Text("Routes: ${routes.size}")
-                    Text("PoD Records: ${receipts.size}")
-                } else {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("Profiles: ${users.size}")
-                            Text("Deliveries: ${deliveries.size}")
-                        }
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("Routes: ${routes.size}")
-                            Text("PoD Records: ${receipts.size}")
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (uiMetrics.sizeClass == me.zayedbinhasan.android_app.ui.core.UiSizeClass.COMPACT) {
+                        Text("Profiles: ${users.size}")
+                        Text("Deliveries: ${deliveries.size}")
+                        Text("Routes: ${routes.size}")
+                        Text("PoD Records: ${receipts.size}")
+                    } else {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("Profiles: ${users.size}")
+                                Text("Deliveries: ${deliveries.size}")
+                            }
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("Routes: ${routes.size}")
+                                Text("PoD Records: ${receipts.size}")
+                            }
                         }
                     }
                 }
             }
         }
 
-        OfflineFallbackPanel(
-            title = "Offline fallback",
-            guidance = "Core local flows remain usable without network. Queue changes and run Sync Status once connectivity returns.",
-        )
+        item {
+            OfflineFallbackPanel(
+                title = "Offline fallback",
+                guidance = "Core local flows remain usable without network. Queue changes and run Sync Status once connectivity returns.",
+            )
+        }
 
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Team Profile", fontWeight = FontWeight.Bold)
-                val user = users.firstOrNull()
-                if (user == null) {
-                    Text("No local profile yet. Add a profile to enable offline role-based actions.")
-                    Button(
-                        onClick = { insertDemoUser(repository) },
-                        modifier = Modifier
-                            .heightIn(min = uiMetrics.controlMinHeight)
-                            .semantics { contentDescription = "Add demo profile" },
-                    ) {
-                        Text("Add Demo Profile")
-                    }
-                } else {
-                    Text("${user.displayName} (${user.role})")
-                    Text(if (user.active) "Status: Active" else "Status: Inactive")
-                    Button(
-                        onClick = { deleteUser(repository, user.userId) },
-                        modifier = Modifier
-                            .heightIn(min = uiMetrics.controlMinHeight)
-                            .semantics { contentDescription = "Delete current profile" },
-                    ) {
-                        Text("Delete Profile")
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Team Profile", fontWeight = FontWeight.Bold)
+                    val user = users.firstOrNull()
+                    if (user == null) {
+                        Text("No local profile yet. Add a profile to enable offline role-based actions.")
+                        Button(
+                            onClick = { insertDemoUser(repository) },
+                            modifier = Modifier
+                                .heightIn(min = uiMetrics.controlMinHeight)
+                                .semantics { contentDescription = "Add demo profile" },
+                        ) {
+                            Text("Add Demo Profile")
+                        }
+                    } else {
+                        Text("${user.displayName} (${user.role})")
+                        Text(if (user.active) "Status: Active" else "Status: Inactive")
+                        Button(
+                            onClick = { deleteUser(repository, user.userId) },
+                            modifier = Modifier
+                                .heightIn(min = uiMetrics.controlMinHeight)
+                                .semantics { contentDescription = "Delete current profile" },
+                        ) {
+                            Text("Delete Profile")
+                        }
                     }
                 }
             }

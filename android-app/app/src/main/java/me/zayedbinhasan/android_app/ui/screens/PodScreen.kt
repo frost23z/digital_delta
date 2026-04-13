@@ -30,9 +30,6 @@ import androidx.compose.ui.unit.dp
 import me.zayedbinhasan.android_app.auth.OfflineAuthManager
 import me.zayedbinhasan.android_app.data.local.repository.LocalRepository
 import me.zayedbinhasan.android_app.ui.core.OfflineFallbackPanel
-import me.zayedbinhasan.android_app.ui.core.OperationalStatusStrip
-import me.zayedbinhasan.android_app.ui.core.StatusChipState
-import me.zayedbinhasan.android_app.ui.core.StatusTone
 import me.zayedbinhasan.android_app.ui.core.UiSizeClass
 import me.zayedbinhasan.android_app.ui.logic.m5_pod.counterSignPendingReceipt
 import me.zayedbinhasan.android_app.ui.logic.m5_pod.createSignedPodHandshake
@@ -77,21 +74,6 @@ internal fun PodScreen(
     ) {
         item {
             Text("Proof of Delivery", fontWeight = FontWeight.Bold)
-        }
-
-        item {
-            OperationalStatusStrip(
-                items = listOf(
-                    StatusChipState(label = "OFFLINE", detail = "READY", tone = StatusTone.OFFLINE),
-                    StatusChipState(label = "SYNCING", detail = "IDLE", tone = StatusTone.SYNC),
-                    StatusChipState(label = "CONFLICT", detail = "NONE", tone = StatusTone.CONFLICT),
-                    StatusChipState(
-                        label = "VERIFIED",
-                        detail = if (receipts.any { it.verified }) "POD_OK" else "PENDING",
-                        tone = StatusTone.VERIFIED,
-                    ),
-                ),
-            )
         }
 
         item {

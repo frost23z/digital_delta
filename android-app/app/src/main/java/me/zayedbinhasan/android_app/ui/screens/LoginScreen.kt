@@ -44,10 +44,12 @@ internal fun LoginScreen(
     onLoginSuccess: (OfflineAuthSession) -> Unit,
 ) {
     val uiMetrics = rememberUiMetrics()
+    val availableRoles = listOf("FIELD_VOLUNTEER", "SUPPLY_MANAGER", "CAMP_COMMANDER", "SYNC_ADMIN")
     var identifierInput by rememberSaveable { mutableStateOf("") }
     var otpInput by rememberSaveable { mutableStateOf("") }
     var cachedIdentityUserId by rememberSaveable { mutableStateOf(authManager.cachedIdentity()?.userId ?: "") }
     var cachedIdentityRole by rememberSaveable { mutableStateOf(authManager.cachedIdentity()?.role ?: "") }
+    var selectedRole by rememberSaveable { mutableStateOf(authManager.cachedIdentity()?.role ?: "FIELD_VOLUNTEER") }
     var cachedIdentityPublicKey by rememberSaveable { mutableStateOf(authManager.cachedIdentity()?.publicKey ?: "") }
     var otpPreview by rememberSaveable { mutableStateOf(authManager.generateCurrentOtp()?.code ?: "") }
     var otpExpiresIn by rememberSaveable { mutableLongStateOf(authManager.generateCurrentOtp()?.expiresInSeconds ?: 0L) }
@@ -62,6 +64,7 @@ internal fun LoginScreen(
         val cached = authManager.cachedIdentity()
         cachedIdentityUserId = cached?.userId ?: ""
         cachedIdentityRole = cached?.role ?: ""
+        selectedRole = cached?.role ?: selectedRole
         cachedIdentityPublicKey = cached?.publicKey ?: ""
 
         val otp = authManager.generateCurrentOtp()
@@ -99,6 +102,25 @@ internal fun LoginScreen(
                     if (cachedIdentityRole.isNotEmpty()) {
                         Text("Role Badge: $cachedIdentityRole", fontWeight = FontWeight.Bold)
                     }
+                }
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Login Role", fontWeight = FontWeight.Bold)
+                    Text("Choose the role before provisioning identity.")
+                    availableRoles.forEach { role ->
+                        Button(
+                            onClick = { selectedRole = role },
+                            enabled = selectedRole != role,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = uiMetrics.controlMinHeight),
+                        ) {
+                            Text(role.replace('_', ' '))
+                        }
+                    }
+                    Text("Selected Role: ${selectedRole.replace('_', ' ')}")
                 }
             }
 
@@ -157,11 +179,12 @@ internal fun LoginScreen(
                     val userId = identifierInput.ifEmpty { cachedIdentityUserId.ifEmpty { "field-volunteer" } }
                     val identity = authManager.provisionIdentity(
                         userId = userId,
-                        role = cachedIdentityRole.ifEmpty { "FIELD_VOLUNTEER" },
+                        role = selectedRole,
                     )
                     if (identity != null) {
                         cachedIdentityUserId = identity.userId
                         cachedIdentityRole = identity.role
+                        selectedRole = identity.role
                         cachedIdentityPublicKey = identity.publicKey
                         identifierInput = identity.userId
                         val otp = authManager.generateCurrentOtp()
