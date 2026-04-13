@@ -1,6 +1,7 @@
 package me.zayedbinhasan.android_app.ui.logic.core
 
 import me.zayedbinhasan.android_app.data.local.repository.LocalRepository
+import org.json.JSONObject
 import java.util.UUID
 
 internal fun appendMutation(
@@ -27,4 +28,11 @@ internal fun appendMutation(
         mutationTimestamp = System.currentTimeMillis(),
         synced = false,
     )
+}
+
+internal fun changedFieldsJson(fields: Map<String, String>): String {
+    if (fields.isEmpty()) {
+        return "{}"
+    }
+    return JSONObject(fields).toString()
 }

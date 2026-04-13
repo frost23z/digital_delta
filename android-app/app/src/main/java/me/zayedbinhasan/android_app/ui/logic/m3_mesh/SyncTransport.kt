@@ -18,6 +18,7 @@ import me.zayedbinhasan.digitaldelta.proto.VectorClock
 import me.zayedbinhasan.digitaldelta.proto.DeltaSyncResponse
 import me.zayedbinhasan.android_app.data.local.repository.LocalRepository
 import me.zayedbinhasan.android_app.ui.logic.m2_crdt.applyIncomingMutations
+import me.zayedbinhasan.android_app.ui.logic.m2_crdt.mergeStrategyForField
 import me.zayedbinhasan.android_app.ui.models.IncomingMutation
 import me.zayedbinhasan.data.Mutation_logs
 import org.json.JSONArray
@@ -411,11 +412,7 @@ internal fun parseIncomingMutationsArray(mutationsArray: JSONArray): List<Incomi
         }
 
         changedFields.forEach { (fieldName, remoteValue) ->
-            val strategy = when (fieldName) {
-                "quantity" -> "ADDITIVE"
-                "assigned_driver_id" -> "MANUAL_OWNERSHIP"
-                else -> "LWW"
-            }
+            val strategy = mergeStrategyForField(fieldName)
             incomingMutations += IncomingMutation(
                 entityType = entityType,
                 entityId = entityId,
@@ -440,11 +437,7 @@ internal fun parseIncomingMutationsProto(mutations: List<Mutation>): List<Incomi
         val changedFields = mutation.changedFieldsMap
 
         changedFields.forEach { (fieldName, remoteValue) ->
-            val strategy = when (fieldName) {
-                "quantity" -> "ADDITIVE"
-                "assigned_driver_id" -> "MANUAL_OWNERSHIP"
-                else -> "LWW"
-            }
+            val strategy = mergeStrategyForField(fieldName)
             incomingMutations += IncomingMutation(
                 entityType = entityType,
                 entityId = entityId,
@@ -601,11 +594,7 @@ internal fun performServerDeltaSyncHttpFallback(
             val changedFields = parseStringMap(mutationJson.optJSONObject("changed_fields")?.toString())
 
             changedFields.forEach { (fieldName, remoteValue) ->
-                val strategy = when (fieldName) {
-                    "quantity" -> "ADDITIVE"
-                    "assigned_driver_id" -> "MANUAL_OWNERSHIP"
-                    else -> "LWW"
-                }
+                val strategy = mergeStrategyForField(fieldName)
                 incomingMutations += IncomingMutation(
                     entityType = entityType,
                     entityId = entityId,

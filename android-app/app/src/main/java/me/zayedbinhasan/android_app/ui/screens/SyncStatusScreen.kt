@@ -7,7 +7,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AssistChip
@@ -26,6 +28,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import me.zayedbinhasan.android_app.ui.core.DEFAULT_LOCAL_NODE_ID
@@ -34,6 +38,11 @@ import me.zayedbinhasan.android_app.ui.core.DEFAULT_SYNC_GRPC_PORT
 import me.zayedbinhasan.android_app.data.local.repository.LocalRepository
 import me.zayedbinhasan.android_app.ui.core.DEFAULT_SYNC_HTTP_BASE_URL
 import me.zayedbinhasan.android_app.ui.core.DEFAULT_SYNC_PEER_ID
+import me.zayedbinhasan.android_app.ui.core.OfflineFallbackPanel
+import me.zayedbinhasan.android_app.ui.core.OperationalStatusStrip
+import me.zayedbinhasan.android_app.ui.core.StatusChipState
+import me.zayedbinhasan.android_app.ui.core.StatusTone
+import me.zayedbinhasan.android_app.ui.core.UiSizeClass
 import me.zayedbinhasan.android_app.ui.logic.m2_crdt.applyIncomingMutationBatch
 import me.zayedbinhasan.android_app.ui.logic.m2_crdt.applyIncomingMutations
 import me.zayedbinhasan.android_app.ui.logic.m2_crdt.simulateSyncWithPeer
@@ -44,6 +53,7 @@ import me.zayedbinhasan.android_app.ui.logic.m3_mesh.performServerDeltaSyncHttpF
 import me.zayedbinhasan.android_app.ui.logic.m3_mesh.receivePeerDeltaSyncOnce
 import me.zayedbinhasan.android_app.ui.models.MutationUi
 import me.zayedbinhasan.android_app.ui.models.SyncCheckpointUi
+import me.zayedbinhasan.android_app.ui.core.rememberUiMetrics
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -54,6 +64,7 @@ private const val DEFAULT_WIFI_SYNC_HTTP_BASE_URL = "http://$DEFAULT_WIFI_HOST:8
 
 @Composable
 internal fun SyncStatusScreen(repository: LocalRepository) {
+    val uiMetrics = rememberUiMetrics()
     val peerId = DEFAULT_SYNC_PEER_ID
     val localNodeId = DEFAULT_LOCAL_NODE_ID
     val coroutineScope = rememberCoroutineScope()
@@ -88,6 +99,10 @@ internal fun SyncStatusScreen(repository: LocalRepository) {
     val checkpointsRaw by remember(repository) {
         repository.observeSyncCheckpoints()
     }.collectAsState(initial = emptyList())
+
+    val openConflictCount by remember(repository) {
+        repository.observeOpenConflictCount()
+    }.collectAsState(initial = 0L)
 
     val unseenForPeerRaw by remember(repository, peerId) {
         repository.observeUnseenMutationsForPeer(peerId)
@@ -125,35 +140,89 @@ internal fun SyncStatusScreen(repository: LocalRepository) {
     }
 
     val activePeerCheckpoint = checkpoints.firstOrNull { it.peerId == peerId }
+    val syncVerified = syncMessage.startsWith("SYNC_OK") ||
+        peerSyncMessage.startsWith("PEER_SYNC_OK") ||
+        peerSyncMessage.startsWith("PEER_RECEIVE_OK")
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(20.dp)
+            .padding(horizontal = uiMetrics.horizontalPadding, vertical = 16.dp)
+            .widthIn(max = uiMetrics.contentMaxWidth)
             .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(uiMetrics.sectionSpacing),
     ) {
         Text("Sync Status", fontWeight = FontWeight.Bold)
+        OperationalStatusStrip(
+            items = listOf(
+                StatusChipState(label = "OFFLINE", detail = "READY", tone = StatusTone.OFFLINE),
+                StatusChipState(
+                    label = "SYNCING",
+                    detail = if (syncInProgress) "IN_PROGRESS" else if (pendingMutations.isNotEmpty()) "QUEUED:${pendingMutations.size}" else "IDLE",
+                    tone = StatusTone.SYNC,
+                ),
+                StatusChipState(
+                    label = "CONFLICT",
+                    detail = if (openConflictCount > 0L) "OPEN:$openConflictCount" else "NONE",
+                    tone = StatusTone.CONFLICT,
+                ),
+                StatusChipState(
+                    label = "VERIFIED",
+                    detail = if (syncVerified) "SYNC_OK" else "PENDING",
+                    tone = StatusTone.VERIFIED,
+                ),
+            ),
+        )
+
+        OfflineFallbackPanel(
+            title = "Network fallback guidance",
+            guidance = "If server connectivity drops, continue local edits and retry from this screen once network is restored.",
+        )
+
         Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Pending Changes: ${pendingMutations.size}")
                 Text("Latest Mutation: ${latestMutationTimestamp ?: "None"}")
                 Text("Unseen For $peerId: ${unseenForPeer.size}")
                 Text("Connection: Ready when peer/server is reachable")
-                OutlinedTextField(
-                    value = syncGrpcHostInput,
-                    onValueChange = { syncGrpcHostInput = it },
-                    label = { Text("Server gRPC Host") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                )
-                OutlinedTextField(
-                    value = syncGrpcPortInput,
-                    onValueChange = { syncGrpcPortInput = it },
-                    label = { Text("Server gRPC Port") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                )
+
+                if (uiMetrics.sizeClass == UiSizeClass.COMPACT) {
+                    OutlinedTextField(
+                        value = syncGrpcHostInput,
+                        onValueChange = { syncGrpcHostInput = it },
+                        label = { Text("Server gRPC Host") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = syncGrpcPortInput,
+                        onValueChange = { syncGrpcPortInput = it },
+                        label = { Text("Server gRPC Port") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        OutlinedTextField(
+                            value = syncGrpcHostInput,
+                            onValueChange = { syncGrpcHostInput = it },
+                            label = { Text("Server gRPC Host") },
+                            modifier = Modifier.weight(0.7f),
+                            singleLine = true,
+                        )
+                        OutlinedTextField(
+                            value = syncGrpcPortInput,
+                            onValueChange = { syncGrpcPortInput = it },
+                            label = { Text("Server gRPC Port") },
+                            modifier = Modifier.weight(0.3f),
+                            singleLine = true,
+                        )
+                    }
+                }
+
                 OutlinedTextField(
                     value = syncServerBaseUrlInput,
                     onValueChange = { syncServerBaseUrlInput = it },
@@ -294,6 +363,9 @@ internal fun SyncStatusScreen(repository: LocalRepository) {
                             syncInProgress = false
                         }
                     },
+                    modifier = Modifier
+                        .heightIn(min = uiMetrics.controlMinHeight)
+                        .semantics { contentDescription = "Run server sync" },
                     enabled = !syncInProgress,
                 ) {
                     Text(if (syncInProgress) "Syncing..." else "Sync Now (Server)")
@@ -377,6 +449,9 @@ internal fun SyncStatusScreen(repository: LocalRepository) {
                             syncInProgress = false
                         }
                     },
+                    modifier = Modifier
+                        .heightIn(min = uiMetrics.controlMinHeight)
+                        .semantics { contentDescription = "Run peer LAN sync" },
                     enabled = !syncInProgress,
                 ) {
                     Text(if (syncInProgress) "Syncing..." else "Peer Sync Now (LAN)")
@@ -416,6 +491,9 @@ internal fun SyncStatusScreen(repository: LocalRepository) {
                             syncInProgress = false
                         }
                     },
+                    modifier = Modifier
+                        .heightIn(min = uiMetrics.controlMinHeight)
+                        .semantics { contentDescription = "Receive one peer sync payload" },
                     enabled = !syncInProgress,
                 ) {
                     Text(if (syncInProgress) "Listening..." else "Receive Peer Sync Once")
@@ -450,10 +528,14 @@ internal fun SyncStatusScreen(repository: LocalRepository) {
                             appliedMutationCount = unseenForPeer.size,
                         )
                     },
+                    modifier = Modifier.heightIn(min = uiMetrics.controlMinHeight),
                 ) {
                     Text("Simulate Sync With Peer")
                 }
-                Button(onClick = { applyIncomingMutationBatch(repository) }) {
+                Button(
+                    onClick = { applyIncomingMutationBatch(repository) },
+                    modifier = Modifier.heightIn(min = uiMetrics.controlMinHeight),
+                ) {
                     Text("Apply Incoming Mutation Batch")
                 }
             }

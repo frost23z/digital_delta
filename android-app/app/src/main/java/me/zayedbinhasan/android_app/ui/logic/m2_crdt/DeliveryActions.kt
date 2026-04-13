@@ -2,6 +2,7 @@ package me.zayedbinhasan.android_app.ui.logic.m2_crdt
 
 import me.zayedbinhasan.android_app.data.local.repository.LocalRepository
 import me.zayedbinhasan.android_app.ui.logic.core.appendMutation
+import me.zayedbinhasan.android_app.ui.logic.core.changedFieldsJson
 import java.util.UUID
 
 internal fun insertDemoDelivery(repository: LocalRepository) {
@@ -19,10 +20,36 @@ internal fun insertDemoDelivery(repository: LocalRepository) {
         status = "PENDING",
         updatedAt = now,
     )
-    appendMutation(repository, entityType = "delivery", entityId = deliveryId, operationType = "UPSERT")
+    appendMutation(
+        repository = repository,
+        entityType = "delivery",
+        entityId = deliveryId,
+        operationType = "UPSERT",
+        changedFieldsJson = changedFieldsJson(
+            mapOf(
+                "supply_id" to "medical-kit-a",
+                "quantity" to "25",
+                "origin_id" to "warehouse-01",
+                "destination_id" to "camp-03",
+                "priority" to "P1_HIGH",
+                "assigned_driver_id" to "driver-07",
+                "status" to "PENDING",
+            ),
+        ),
+    )
 }
 
 internal fun deleteDelivery(repository: LocalRepository, taskId: String) {
     repository.deleteDeliveryById(taskId)
-    appendMutation(repository, entityType = "delivery", entityId = taskId, operationType = "DELETE")
+    appendMutation(
+        repository = repository,
+        entityType = "delivery",
+        entityId = taskId,
+        operationType = "DELETE",
+        changedFieldsJson = changedFieldsJson(
+            mapOf(
+                "status" to "DELETED",
+            ),
+        ),
+    )
 }
