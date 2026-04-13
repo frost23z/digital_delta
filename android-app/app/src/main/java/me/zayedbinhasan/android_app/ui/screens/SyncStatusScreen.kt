@@ -39,10 +39,7 @@ import me.zayedbinhasan.android_app.data.local.repository.LocalRepository
 import me.zayedbinhasan.android_app.ui.core.DEFAULT_SYNC_HTTP_BASE_URL
 import me.zayedbinhasan.android_app.ui.core.DEFAULT_SYNC_PEER_ID
 import me.zayedbinhasan.android_app.ui.core.OfflineFallbackPanel
-import me.zayedbinhasan.android_app.ui.core.OperationalStatusStrip
 import me.zayedbinhasan.android_app.ui.core.RbacCapability
-import me.zayedbinhasan.android_app.ui.core.StatusChipState
-import me.zayedbinhasan.android_app.ui.core.StatusTone
 import me.zayedbinhasan.android_app.ui.core.UiSizeClass
 import me.zayedbinhasan.android_app.ui.core.allowedRolesLabel
 import me.zayedbinhasan.android_app.ui.core.isRoleAllowed
@@ -107,10 +104,6 @@ internal fun SyncStatusScreen(
         repository.observeSyncCheckpoints()
     }.collectAsState(initial = emptyList())
 
-    val openConflictCount by remember(repository) {
-        repository.observeOpenConflictCount()
-    }.collectAsState(initial = 0L)
-
     val unseenForPeerRaw by remember(repository, peerId) {
         repository.observeUnseenMutationsForPeer(peerId)
     }.collectAsState(initial = emptyList())
@@ -147,10 +140,6 @@ internal fun SyncStatusScreen(
     }
 
     val activePeerCheckpoint = checkpoints.firstOrNull { it.peerId == peerId }
-    val syncVerified = syncMessage.startsWith("SYNC_OK") ||
-        peerSyncMessage.startsWith("PEER_SYNC_OK") ||
-        peerSyncMessage.startsWith("PEER_RECEIVE_OK")
-
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -160,26 +149,6 @@ internal fun SyncStatusScreen(
         verticalArrangement = Arrangement.spacedBy(uiMetrics.sectionSpacing),
     ) {
         Text("Sync Status", fontWeight = FontWeight.Bold)
-        OperationalStatusStrip(
-            items = listOf(
-                StatusChipState(label = "OFFLINE", detail = "READY", tone = StatusTone.OFFLINE),
-                StatusChipState(
-                    label = "SYNCING",
-                    detail = if (syncInProgress) "IN_PROGRESS" else if (pendingMutations.isNotEmpty()) "QUEUED:${pendingMutations.size}" else "IDLE",
-                    tone = StatusTone.SYNC,
-                ),
-                StatusChipState(
-                    label = "CONFLICT",
-                    detail = if (openConflictCount > 0L) "OPEN:$openConflictCount" else "NONE",
-                    tone = StatusTone.CONFLICT,
-                ),
-                StatusChipState(
-                    label = "VERIFIED",
-                    detail = if (syncVerified) "SYNC_OK" else "PENDING",
-                    tone = StatusTone.VERIFIED,
-                ),
-            ),
-        )
 
         OfflineFallbackPanel(
             title = "Network fallback guidance",

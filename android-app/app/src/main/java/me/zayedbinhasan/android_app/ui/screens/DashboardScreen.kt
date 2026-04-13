@@ -24,9 +24,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import me.zayedbinhasan.android_app.data.local.repository.LocalRepository
 import me.zayedbinhasan.android_app.ui.core.OfflineFallbackPanel
-import me.zayedbinhasan.android_app.ui.core.OperationalStatusStrip
-import me.zayedbinhasan.android_app.ui.core.StatusChipState
-import me.zayedbinhasan.android_app.ui.core.StatusTone
 import me.zayedbinhasan.android_app.ui.logic.m1_auth.deleteUser
 import me.zayedbinhasan.android_app.ui.logic.m1_auth.insertDemoUser
 import me.zayedbinhasan.android_app.ui.models.DeliveryUi
@@ -41,14 +38,6 @@ internal fun DashboardScreen(repository: LocalRepository) {
     val usersRaw by remember(repository) {
         repository.observeUsers()
     }.collectAsState(initial = emptyList())
-
-    val pendingMutationsRaw by remember(repository) {
-        repository.observePendingMutations()
-    }.collectAsState(initial = emptyList())
-
-    val openConflictCount by remember(repository) {
-        repository.observeOpenConflictCount()
-    }.collectAsState(initial = 0L)
 
     val deliveriesRaw by remember(repository) {
         repository.observeDeliveries()
@@ -100,29 +89,6 @@ internal fun DashboardScreen(repository: LocalRepository) {
     ) {
         item {
             Text("Mission Overview", fontWeight = FontWeight.Bold)
-        }
-
-        item {
-            OperationalStatusStrip(
-                items = listOf(
-                    StatusChipState(label = "OFFLINE", detail = "READY", tone = StatusTone.OFFLINE),
-                    StatusChipState(
-                        label = "SYNCING",
-                        detail = if (pendingMutationsRaw.isNotEmpty()) "QUEUED:${pendingMutationsRaw.size}" else "IDLE",
-                        tone = StatusTone.SYNC,
-                    ),
-                    StatusChipState(
-                        label = "CONFLICT",
-                        detail = if (openConflictCount > 0L) "OPEN:$openConflictCount" else "NONE",
-                        tone = StatusTone.CONFLICT,
-                    ),
-                    StatusChipState(
-                        label = "VERIFIED",
-                        detail = if (receipts.count { it.verified } > 0) "POD:${receipts.count { it.verified }}" else "NONE",
-                        tone = StatusTone.VERIFIED,
-                    ),
-                ),
-            )
         }
 
         item {
