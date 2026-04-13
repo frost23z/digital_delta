@@ -2,9 +2,13 @@ package me.zayedbinhasan.android_app.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
@@ -22,10 +26,18 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import me.zayedbinhasan.android_app.data.local.repository.LocalRepository
 import me.zayedbinhasan.android_app.ui.core.DEFAULT_CHAOS_HTTP_BASE_URL
+import me.zayedbinhasan.android_app.ui.core.OfflineFallbackPanel
+import me.zayedbinhasan.android_app.ui.core.OperationalStatusStrip
+import me.zayedbinhasan.android_app.ui.core.StatusChipState
+import me.zayedbinhasan.android_app.ui.core.StatusTone
+import me.zayedbinhasan.android_app.ui.core.UiSizeClass
+import me.zayedbinhasan.android_app.ui.core.rememberUiMetrics
 import me.zayedbinhasan.android_app.ui.logic.m4_routing.canManageRouteActions
 import me.zayedbinhasan.android_app.ui.logic.m4_routing.deleteRoute
 import me.zayedbinhasan.android_app.ui.logic.m4_routing.insertDemoRoute
@@ -41,10 +53,24 @@ import kotlinx.coroutines.withContext
 internal fun RoutesScreen(
     repository: LocalRepository,
     activeRole: String,
+    onGoDashboard: (() -> Unit)? = null,
 ) {
+    val uiMetrics = rememberUiMetrics()
     val coroutineScope = rememberCoroutineScope()
     val routesRaw by remember(repository) {
         repository.observeRoutes()
+    }.collectAsState(initial = emptyList())
+
+    val pendingMutationsRaw by remember(repository) {
+        repository.observePendingMutations()
+    }.collectAsState(initial = emptyList())
+
+    val openConflictCount by remember(repository) {
+        repository.observeOpenConflictCount()
+    }.collectAsState(initial = 0L)
+
+    val receiptsRaw by remember(repository) {
+        repository.observeReceipts()
     }.collectAsState(initial = emptyList())
 
     var chaosBaseUrl by rememberSaveable { mutableStateOf(DEFAULT_CHAOS_HTTP_BASE_URL) }
@@ -109,96 +135,213 @@ internal fun RoutesScreen(
         }
     }
 
-    Column(
+    LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+            .padding(horizontal = uiMetrics.horizontalPadding, vertical = 16.dp)
+            .widthIn(max = uiMetrics.contentMaxWidth),
+        contentPadding = PaddingValues(bottom = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(uiMetrics.sectionSpacing),
     ) {
-        Text("Routes", fontWeight = FontWeight.Bold)
-        if (!canManageRoutes) {
-            Text("Route management requires MANAGER/COMMANDER/ADMIN role")
+        item {
+            Text("Routes", fontWeight = FontWeight.Bold)
         }
 
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("M4 + M6 Controls", fontWeight = FontWeight.Bold)
-                Text("SLA table: P0<=60m, P1<=180m, P2<=360m, P3<=720m")
-                Text("Breach trigger: ETA increase >= 30% or SLA exceeded")
-                Text("Route Engine: $routeEngineMessage")
-                Text("Triage: $triageSummary")
-                Text("Last recompute: ${lastRecomputedAt ?: "Never"}")
+        item {
+            OperationalStatusStrip(
+                items = listOf(
+                    StatusChipState(label = "OFFLINE", detail = "READY", tone = StatusTone.OFFLINE),
+                    StatusChipState(
+                        label = "SYNCING",
+                        detail = if (routeEngineBusy) "RECOMPUTING" else if (pendingMutationsRaw.isNotEmpty()) "QUEUED:${pendingMutationsRaw.size}" else "IDLE",
+                        tone = StatusTone.SYNC,
+                    ),
+                    StatusChipState(
+                        label = "CONFLICT",
+                        detail = if (openConflictCount > 0L) "OPEN:$openConflictCount" else "NONE",
+                        tone = StatusTone.CONFLICT,
+                    ),
+                    StatusChipState(
+                        label = "VERIFIED",
+                        detail = if (receiptsRaw.any { it.verified }) "POD_OK" else "PENDING",
+                        tone = StatusTone.VERIFIED,
+                    ),
+                ),
+            )
+        }
 
-                OutlinedTextField(
-                    value = chaosBaseUrl,
-                    onValueChange = { chaosBaseUrl = it },
-                    label = { Text("Chaos API Base URL") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+        item {
+            OfflineFallbackPanel(
+                title = "Offline route operations",
+                guidance = "Route records remain editable offline. Chaos refresh requires network and can be retried anytime.",
+            )
+        }
 
-                Button(onClick = { insertDemoRoute(repository, vehicle = "TRUCK") }, enabled = canManageRoutes) {
-                    Text("Create Demo Truck Route")
-                }
-                Button(onClick = { insertDemoRoute(repository, vehicle = "SPEEDBOAT") }, enabled = canManageRoutes) {
-                    Text("Create Demo Boat Route")
-                }
-                Button(onClick = { insertDemoRoute(repository, vehicle = "DRONE") }, enabled = canManageRoutes) {
-                    Text("Create Demo Drone Route")
-                }
+        if (!canManageRoutes) {
+            item {
+                Text("Route management requires MANAGER/COMMANDER/ADMIN role")
+            }
+        }
 
-                Button(
-                    onClick = {
-                        if (routeEngineBusy) {
-                            return@Button
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("M4 + M6 Controls", fontWeight = FontWeight.Bold)
+                    Text("SLA table: P0<=60m, P1<=180m, P2<=360m, P3<=720m")
+                    Text("Breach trigger: ETA increase >= 30% or SLA exceeded")
+                    Text("Route Engine: $routeEngineMessage")
+                    Text("Triage: $triageSummary")
+                    Text("Last recompute: ${lastRecomputedAt ?: "Never"}")
+
+                    onGoDashboard?.let { navigateToDashboard ->
+                        Button(
+                            onClick = navigateToDashboard,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = uiMetrics.controlMinHeight),
+                        ) {
+                            Text("Go Dashboard")
                         }
+                    }
 
-                        routeEngineBusy = true
-                        coroutineScope.launch {
-                            val summary = withContext(Dispatchers.IO) {
-                                refreshRoutesFromChaos(repository, chaosBaseUrl.trim().trimEnd('/'))
+                    OutlinedTextField(
+                        value = chaosBaseUrl,
+                        onValueChange = { chaosBaseUrl = it },
+                        label = { Text("Chaos API Base URL") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+
+                    if (uiMetrics.sizeClass == UiSizeClass.COMPACT) {
+                        Button(
+                            onClick = { insertDemoRoute(repository, vehicle = "TRUCK") },
+                            enabled = canManageRoutes,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = uiMetrics.controlMinHeight),
+                        ) {
+                            Text("Create Demo Truck Route")
+                        }
+                        Button(
+                            onClick = { insertDemoRoute(repository, vehicle = "SPEEDBOAT") },
+                            enabled = canManageRoutes,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = uiMetrics.controlMinHeight),
+                        ) {
+                            Text("Create Demo Boat Route")
+                        }
+                        Button(
+                            onClick = { insertDemoRoute(repository, vehicle = "DRONE") },
+                            enabled = canManageRoutes,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = uiMetrics.controlMinHeight),
+                        ) {
+                            Text("Create Demo Drone Route")
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Button(
+                                onClick = { insertDemoRoute(repository, vehicle = "TRUCK") },
+                                enabled = canManageRoutes,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = uiMetrics.controlMinHeight),
+                            ) {
+                                Text("Truck")
                             }
-                            applyRefreshSummary(
-                                success = summary.success,
-                                reasonCode = summary.reasonCode,
-                                detail = summary.detail,
-                                changedRouteCount = summary.changedRouteCount,
-                                blockedRouteCount = summary.blockedRouteCount,
-                                preemptedLowPriorityCount = summary.preemptedLowPriorityCount,
-                                reroutedHighPriorityCount = summary.reroutedHighPriorityCount,
-                                recomputedAt = summary.recomputedAt,
-                            )
-                            routeEngineBusy = false
+                            Button(
+                                onClick = { insertDemoRoute(repository, vehicle = "SPEEDBOAT") },
+                                enabled = canManageRoutes,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = uiMetrics.controlMinHeight),
+                            ) {
+                                Text("Boat")
+                            }
+                            Button(
+                                onClick = { insertDemoRoute(repository, vehicle = "DRONE") },
+                                enabled = canManageRoutes,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = uiMetrics.controlMinHeight),
+                            ) {
+                                Text("Drone")
+                            }
                         }
-                    },
-                    enabled = canManageRoutes && !routeEngineBusy,
-                ) {
-                    Text(if (routeEngineBusy) "Recomputing..." else "Recompute From Chaos Now")
-                }
+                    }
 
-                Button(
-                    onClick = { autoPollEnabled = !autoPollEnabled },
-                    enabled = canManageRoutes,
-                ) {
-                    Text(if (autoPollEnabled) "Stop Auto Poll (2s)" else "Start Auto Poll (2s)")
+                    Button(
+                        onClick = {
+                            if (routeEngineBusy) {
+                                return@Button
+                            }
+
+                            routeEngineBusy = true
+                            coroutineScope.launch {
+                                val summary = withContext(Dispatchers.IO) {
+                                    refreshRoutesFromChaos(repository, chaosBaseUrl.trim().trimEnd('/'))
+                                }
+                                applyRefreshSummary(
+                                    success = summary.success,
+                                    reasonCode = summary.reasonCode,
+                                    detail = summary.detail,
+                                    changedRouteCount = summary.changedRouteCount,
+                                    blockedRouteCount = summary.blockedRouteCount,
+                                    preemptedLowPriorityCount = summary.preemptedLowPriorityCount,
+                                    reroutedHighPriorityCount = summary.reroutedHighPriorityCount,
+                                    recomputedAt = summary.recomputedAt,
+                                )
+                                routeEngineBusy = false
+                            }
+                        },
+                        enabled = canManageRoutes && !routeEngineBusy,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = uiMetrics.controlMinHeight)
+                            .semantics { contentDescription = "Recompute routes from chaos API" },
+                    ) {
+                        Text(if (routeEngineBusy) "Recomputing..." else "Recompute From Chaos Now")
+                    }
+
+                    Button(
+                        onClick = { autoPollEnabled = !autoPollEnabled },
+                        enabled = canManageRoutes,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = uiMetrics.controlMinHeight)
+                            .semantics { contentDescription = "Toggle route auto polling" },
+                    ) {
+                        Text(if (autoPollEnabled) "Stop Auto Poll (2s)" else "Start Auto Poll (2s)")
+                    }
                 }
             }
         }
 
-        HorizontalDivider()
+        item {
+            HorizontalDivider()
+        }
 
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(routes, key = { it.routeId }) { route ->
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("${route.routeId} • ${route.vehicle}", fontWeight = FontWeight.Bold)
-                        Text("ETA: ${route.etaTimestamp}")
-                        Text("Duration: ${route.totalDurationMins} mins")
-                        Text("Reason: ${route.reasonCode}")
-                        Text("Edges: ${route.edgeIds}")
-                        Button(onClick = { deleteRoute(repository, route.routeId) }, enabled = canManageRoutes) {
-                            Text("Delete")
-                        }
+        items(routes, key = { it.routeId }) { route ->
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("${route.routeId} • ${route.vehicle}", fontWeight = FontWeight.Bold)
+                    Text("ETA: ${route.etaTimestamp}")
+                    Text("Duration: ${route.totalDurationMins} mins")
+                    Text("Reason: ${route.reasonCode}")
+                    Text("Edges: ${route.edgeIds}")
+                    Button(
+                        onClick = { deleteRoute(repository, route.routeId) },
+                        enabled = canManageRoutes,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = uiMetrics.controlMinHeight),
+                    ) {
+                        Text("Delete")
                     }
                 }
             }

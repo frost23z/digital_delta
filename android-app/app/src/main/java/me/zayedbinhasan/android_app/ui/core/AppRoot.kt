@@ -1,27 +1,36 @@
 package me.zayedbinhasan.android_app.ui.core
 
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Directions
 import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.ReportProblem
 import androidx.compose.material.icons.filled.Sync
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -36,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -49,6 +59,7 @@ import me.zayedbinhasan.android_app.ui.screens.DashboardScreen
 import me.zayedbinhasan.android_app.ui.screens.DeliveriesScreen
 import me.zayedbinhasan.android_app.ui.screens.LoginScreen
 import me.zayedbinhasan.android_app.ui.screens.PodScreen
+import me.zayedbinhasan.android_app.ui.screens.ProfileScreen
 import me.zayedbinhasan.android_app.ui.screens.RoutesScreen
 import me.zayedbinhasan.android_app.ui.screens.SyncStatusScreen
 import me.zayedbinhasan.android_app.ui.theme.AndroidappTheme
@@ -112,6 +123,8 @@ fun DigitalDeltaAppPreview() {
 private data class AppDestination(
     val route: String,
     val title: String,
+    val navLabel: String,
+    val emoji: String,
     val icon: ImageVector,
 )
 
@@ -122,6 +135,7 @@ private object AppRoutes {
     const val POD = "pod"
     const val SYNC_STATUS = "sync_status"
     const val CONFLICTS = "conflicts"
+    const val PROFILE = "profile"
 }
 
 internal const val DEFAULT_SYNC_PEER_ID = "sync-server-main"
@@ -132,11 +146,11 @@ internal const val DEFAULT_LOCAL_NODE_ID = "android_client"
 internal const val DEFAULT_CHAOS_HTTP_BASE_URL = "http://10.0.2.2:5000"
 
 private val appDestinations = listOf(
-    AppDestination(route = AppRoutes.DASHBOARD, title = "Dashboard", icon = Icons.Filled.Dashboard),
-    AppDestination(route = AppRoutes.DELIVERIES, title = "Deliveries", icon = Icons.Filled.Inventory2),
-    AppDestination(route = AppRoutes.ROUTE, title = "Route", icon = Icons.Filled.Directions),
-    AppDestination(route = AppRoutes.POD, title = "PoD", icon = Icons.Filled.QrCodeScanner),
-    AppDestination(route = AppRoutes.SYNC_STATUS, title = "Sync Status", icon = Icons.Filled.Sync),
+    AppDestination(route = AppRoutes.DASHBOARD, title = "Dashboard", navLabel = "🏠 Home", emoji = "🏠", icon = Icons.Filled.Dashboard),
+    AppDestination(route = AppRoutes.DELIVERIES, title = "Deliveries", navLabel = "📦 Delivery", emoji = "📦", icon = Icons.Filled.Inventory2),
+    AppDestination(route = AppRoutes.ROUTE, title = "Route", navLabel = "🧭 Route", emoji = "🧭", icon = Icons.Filled.Directions),
+    AppDestination(route = AppRoutes.POD, title = "PoD", navLabel = "✅ PoD", emoji = "✅", icon = Icons.Filled.QrCodeScanner),
+    AppDestination(route = AppRoutes.SYNC_STATUS, title = "Sync Status", navLabel = "🔄 Sync", emoji = "🔄", icon = Icons.Filled.Sync),
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -147,37 +161,79 @@ private fun AuthenticatedShell(
     session: OfflineAuthSession,
     onLogout: () -> Unit,
 ) {
+    val uiMetrics = rememberUiMetrics()
     val navController = rememberNavController()
     val openConflictCount by remember(repository) {
         repository.observeOpenConflictCount()
     }.collectAsState(initial = 0L)
+    val pendingMutationsRaw by remember(repository) {
+        repository.observePendingMutations()
+    }.collectAsState(initial = emptyList())
+    val receiptsRaw by remember(repository) {
+        repository.observeReceipts()
+    }.collectAsState(initial = emptyList())
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route ?: appDestinations.first().route
     val currentTitle = when (currentRoute) {
-        AppRoutes.CONFLICTS -> "Conflicts"
-        else -> appDestinations.firstOrNull { it.route == currentRoute }?.title ?: "Digital Delta"
+        AppRoutes.CONFLICTS -> "⚠️ Conflicts"
+        AppRoutes.PROFILE -> "👤 Profile"
+        else -> appDestinations.firstOrNull { it.route == currentRoute }
+            ?.let { "${it.emoji} ${it.title}" }
+            ?: "Digital Delta"
     }
-
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
             TopAppBar(
-                title = { Text(currentTitle) },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+                ),
+                title = {
+                    Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                        Text(
+                            text = currentTitle,
+                            fontWeight = FontWeight.ExtraBold,
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Text(
+                            text = "Digital Delta Operations",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
+                        )
+                    }
+                },
                 actions = {
-                    IconButton(
+                    FilledTonalIconButton(
                         onClick = {
                             navController.navigate(AppRoutes.CONFLICTS) {
                                 launchSingleTop = true
                             }
                         },
+                        colors = IconButtonDefaults.filledTonalIconButtonColors(
+                            containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.15f),
+                        ),
                     ) {
                         Icon(
                             imageVector = Icons.Filled.ReportProblem,
                             contentDescription = "Open conflicts",
+                            tint = MaterialTheme.colorScheme.error,
                         )
                     }
-                    Button(onClick = onLogout, modifier = Modifier.padding(end = 8.dp)) {
-                        Text("Logout")
+                    FilledTonalIconButton(
+                        onClick = {
+                            navController.navigate(AppRoutes.PROFILE) {
+                                launchSingleTop = true
+                            }
+                        },
+                        colors = IconButtonDefaults.filledTonalIconButtonColors(
+                            containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                            contentColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.AccountCircle,
+                            contentDescription = "Open profile",
+                        )
                     }
                 },
             )
@@ -192,20 +248,24 @@ private fun AuthenticatedShell(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding),
+                .padding(innerPadding)
+                .widthIn(max = uiMetrics.contentMaxWidth)
+                .padding(horizontal = uiMetrics.horizontalPadding),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             SessionStatusHeader(
                 role = session.role,
                 authMode = session.authMode,
                 openConflictCount = openConflictCount,
+                pendingMutationCount = pendingMutationsRaw.size,
+                verifiedReceiptCount = receiptsRaw.count { it.verified },
             )
             AppNavHost(
                 repository = repository,
                 authManager = authManager,
                 navController = navController,
-                activeUserId = session.userId,
-                activeRole = session.role,
+                session = session,
+                onLogout = onLogout,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
@@ -219,27 +279,59 @@ private fun BottomNavigationBar(
     navController: NavHostController,
     currentRoute: String,
 ) {
-    NavigationBar {
-        appDestinations.forEach { destination ->
-            NavigationBarItem(
-                selected = currentRoute == destination.route,
-                onClick = {
-                    navController.navigate(destination.route) {
-                        popUpTo(AppRoutes.DASHBOARD) {
-                            saveState = true
-                        }
-                        launchSingleTop = true
-                        restoreState = true
-                    }
-                },
-                label = { Text(destination.title) },
-                icon = {
-                    Icon(
-                        imageVector = destination.icon,
-                        contentDescription = destination.title,
-                    )
-                },
-            )
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(24.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+    ) {
+        NavigationBar(
+            containerColor = MaterialTheme.colorScheme.surface,
+        ) {
+            appDestinations.forEach { destination ->
+                NavigationBarItem(
+                    selected = currentRoute == destination.route,
+                    onClick = {
+                        navigateToPrimaryRoute(navController, destination.route)
+                    },
+                    alwaysShowLabel = false,
+                    label = { Text(destination.navLabel) },
+                    icon = {
+                        Icon(
+                            imageVector = destination.icon,
+                            contentDescription = destination.title,
+                        )
+                    },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = MaterialTheme.colorScheme.primary,
+                        selectedTextColor = MaterialTheme.colorScheme.primary,
+                        indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                    ),
+                )
+            }
+        }
+    }
+}
+
+private fun navigateToPrimaryRoute(
+    navController: NavHostController,
+    route: String,
+) {
+    val currentRoute = navController.currentBackStackEntry?.destination?.route
+    if (currentRoute == route) {
+        return
+    }
+
+    // Prefer popping to an existing destination to avoid restore-state edge cases
+    // when leaving non-primary routes like conflicts/profile.
+    val restoredFromBackStack = navController.popBackStack(route, inclusive = false)
+    if (!restoredFromBackStack) {
+        navController.navigate(route) {
+            popUpTo(navController.graph.findStartDestination().id) {
+                inclusive = false
+            }
+            launchSingleTop = true
         }
     }
 }
@@ -249,16 +341,42 @@ private fun SessionStatusHeader(
     role: String,
     authMode: String,
     openConflictCount: Long,
+    pendingMutationCount: Int,
+    verifiedReceiptCount: Int,
 ) {
+    val uiMetrics = rememberUiMetrics()
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp),
+            .padding(horizontal = 4.dp),
     ) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(uiMetrics.sectionSpacing),
+        ) {
             Text("Role: ${role.replace('_', ' ')}", fontWeight = FontWeight.Bold)
             Text("Auth: ${authMode.replace('_', ' ')}")
             Text("Open conflicts: $openConflictCount")
+            OperationalStatusStrip(
+                items = listOf(
+                    StatusChipState(label = "OFFLINE", detail = "READY", tone = StatusTone.OFFLINE),
+                    StatusChipState(
+                        label = "SYNCING",
+                        detail = if (pendingMutationCount > 0) "QUEUED:$pendingMutationCount" else "IDLE",
+                        tone = StatusTone.SYNC,
+                    ),
+                    StatusChipState(
+                        label = "CONFLICT",
+                        detail = if (openConflictCount > 0L) "OPEN:$openConflictCount" else "NONE",
+                        tone = StatusTone.CONFLICT,
+                    ),
+                    StatusChipState(
+                        label = "VERIFIED",
+                        detail = if (verifiedReceiptCount > 0) "POD:$verifiedReceiptCount" else "NONE",
+                        tone = StatusTone.VERIFIED,
+                    ),
+                ),
+            )
         }
     }
 }
@@ -268,8 +386,8 @@ private fun AppNavHost(
     repository: LocalRepository,
     authManager: OfflineAuthManager,
     navController: NavHostController,
-    activeUserId: String,
-    activeRole: String,
+    session: OfflineAuthSession,
+    onLogout: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     NavHost(
@@ -286,21 +404,38 @@ private fun AppNavHost(
         composable(AppRoutes.ROUTE) {
             RoutesScreen(
                 repository = repository,
-                activeRole = activeRole,
+                activeRole = session.role,
+                onGoDashboard = {
+                    navigateToPrimaryRoute(navController, AppRoutes.DASHBOARD)
+                },
             )
         }
         composable(AppRoutes.POD) {
             PodScreen(
                 repository = repository,
                 authManager = authManager,
-                activeUserId = activeUserId,
+                activeUserId = session.userId,
             )
         }
         composable(AppRoutes.SYNC_STATUS) {
             SyncStatusScreen(repository = repository)
         }
         composable(AppRoutes.CONFLICTS) {
-            ConflictScreen(repository = repository)
+            ConflictScreen(
+                repository = repository,
+                onGoDashboard = {
+                    navigateToPrimaryRoute(navController, AppRoutes.DASHBOARD)
+                },
+                onGoRoute = {
+                    navigateToPrimaryRoute(navController, AppRoutes.ROUTE)
+                },
+            )
+        }
+        composable(AppRoutes.PROFILE) {
+            ProfileScreen(
+                session = session,
+                onLogout = onLogout,
+            )
         }
     }
 }

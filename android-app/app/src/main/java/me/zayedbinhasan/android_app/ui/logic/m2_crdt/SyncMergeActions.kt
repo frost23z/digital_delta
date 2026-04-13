@@ -3,6 +3,7 @@ package me.zayedbinhasan.android_app.ui.logic.m2_crdt
 import me.zayedbinhasan.android_app.data.local.repository.LocalRepository
 import me.zayedbinhasan.android_app.ui.core.DEFAULT_SYNC_PEER_ID
 import me.zayedbinhasan.android_app.ui.logic.core.appendMutation
+import me.zayedbinhasan.android_app.ui.logic.core.changedFieldsJson
 import me.zayedbinhasan.android_app.ui.models.IncomingMutation
 
 internal fun simulateSyncWithPeer(
@@ -70,37 +71,95 @@ internal fun applyIncomingMutations(repository: LocalRepository, incoming: List<
         }
 
         val local = repository.deliveryById(mutation.entityId) ?: return@forEach
+        val strategy = mergeStrategyForField(mutation.fieldName)
 
         when (mutation.fieldName) {
             "status" -> {
                 val remoteStatus = mutation.remoteValue
                 if (mutation.timestamp > local.updated_at) {
                     repository.updateDeliveryStatus(local.task_id, remoteStatus, mutation.timestamp)
-                    appendMutation(repository, entityType = "delivery", entityId = local.task_id, operationType = "APPLY_REMOTE_STATUS")
+                    appendMutation(
+                        repository = repository,
+                        entityType = "delivery",
+                        entityId = local.task_id,
+                        operationType = "APPLY_REMOTE_STATUS",
+                        changedFieldsJson = changedFieldsJson(
+                            mapOf(
+                                "field" to "status",
+                                "local" to local.status,
+                                "remote" to remoteStatus,
+                                "strategy" to strategy,
+                                "applied" to remoteStatus,
+                            ),
+                        ),
+                    )
                 } else if (mutation.timestamp == local.updated_at) {
                     val chosen = maxOf(local.status, remoteStatus)
                     repository.updateDeliveryStatus(local.task_id, chosen, mutation.timestamp)
-                    appendMutation(repository, entityType = "delivery", entityId = local.task_id, operationType = "APPLY_REMOTE_TIE_BREAK")
+                    appendMutation(
+                        repository = repository,
+                        entityType = "delivery",
+                        entityId = local.task_id,
+                        operationType = "APPLY_REMOTE_TIE_BREAK",
+                        changedFieldsJson = changedFieldsJson(
+                            mapOf(
+                                "field" to "status",
+                                "local" to local.status,
+                                "remote" to remoteStatus,
+                                "strategy" to strategy,
+                                "applied" to chosen,
+                            ),
+                        ),
+                    )
                 }
             }
             "quantity" -> {
                 val delta = mutation.remoteValue.toLongOrNull() ?: return@forEach
                 val merged = (local.quantity + delta).coerceAtLeast(0)
                 repository.updateDeliveryQuantity(local.task_id, merged, mutation.timestamp)
-                appendMutation(repository, entityType = "delivery", entityId = local.task_id, operationType = "APPLY_REMOTE_QUANTITY")
+                appendMutation(
+                    repository = repository,
+                    entityType = "delivery",
+                    entityId = local.task_id,
+                    operationType = "APPLY_REMOTE_QUANTITY",
+                    changedFieldsJson = changedFieldsJson(
+                        mapOf(
+                            "field" to "quantity",
+                            "local" to local.quantity.toString(),
+                            "remote_delta" to delta.toString(),
+                            "strategy" to strategy,
+                            "applied" to merged.toString(),
+                        ),
+                    ),
+                )
             }
             "assigned_driver_id" -> {
                 val localAssignee = local.assigned_driver_id
                 if (localAssignee == null || localAssignee == mutation.remoteValue) {
                     repository.updateDeliveryAssignee(local.task_id, mutation.remoteValue, mutation.timestamp)
-                    appendMutation(repository, entityType = "delivery", entityId = local.task_id, operationType = "APPLY_REMOTE_ASSIGNMENT")
+                    appendMutation(
+                        repository = repository,
+                        entityType = "delivery",
+                        entityId = local.task_id,
+                        operationType = "APPLY_REMOTE_ASSIGNMENT",
+                        changedFieldsJson = changedFieldsJson(
+                            mapOf(
+                                "field" to "assigned_driver_id",
+                                "local" to (localAssignee ?: "(null)"),
+                                "remote" to mutation.remoteValue,
+                                "strategy" to strategy,
+                                "applied" to mutation.remoteValue,
+                            ),
+                        ),
+                    )
                 } else {
                     createConflict(
                         repository = repository,
                         entityId = local.task_id,
+                        fieldName = mutation.fieldName,
                         localValue = localAssignee,
                         remoteValue = mutation.remoteValue,
-                        mergeStrategy = mutation.mergeStrategy,
+                        mergeStrategy = strategy,
                     )
                 }
             }

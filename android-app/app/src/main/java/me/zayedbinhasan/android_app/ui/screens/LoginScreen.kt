@@ -4,7 +4,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -23,10 +25,17 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import me.zayedbinhasan.android_app.auth.OfflineAuthManager
 import me.zayedbinhasan.android_app.auth.OfflineAuthSession
+import me.zayedbinhasan.android_app.ui.core.OfflineFallbackPanel
+import me.zayedbinhasan.android_app.ui.core.OperationalStatusStrip
+import me.zayedbinhasan.android_app.ui.core.StatusChipState
+import me.zayedbinhasan.android_app.ui.core.StatusTone
+import me.zayedbinhasan.android_app.ui.core.rememberUiMetrics
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -34,6 +43,7 @@ internal fun LoginScreen(
     authManager: OfflineAuthManager,
     onLoginSuccess: (OfflineAuthSession) -> Unit,
 ) {
+    val uiMetrics = rememberUiMetrics()
     var identifierInput by rememberSaveable { mutableStateOf("") }
     var otpInput by rememberSaveable { mutableStateOf("") }
     var cachedIdentityUserId by rememberSaveable { mutableStateOf(authManager.cachedIdentity()?.userId ?: "") }
@@ -74,15 +84,16 @@ internal fun LoginScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(20.dp)
+                .padding(horizontal = uiMetrics.horizontalPadding, vertical = 16.dp)
+                .widthIn(max = uiMetrics.contentMaxWidth)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(uiMetrics.sectionSpacing),
             horizontalAlignment = Alignment.Start,
         ) {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Welcome to Digital Delta", fontWeight = FontWeight.Bold)
-                    Text("Provision once, then re-login offline with local OTP and cached role.")
+                    Text("Secure offline-first login for field operations.")
                     Text("Offline Auth State: $offlineAuthState")
                     Text("Session Status: $sessionStatus")
                     if (cachedIdentityRole.isNotEmpty()) {
@@ -90,6 +101,28 @@ internal fun LoginScreen(
                     }
                 }
             }
+
+            OperationalStatusStrip(
+                items = listOf(
+                    StatusChipState(label = "OFFLINE", detail = "AUTH_READY", tone = StatusTone.OFFLINE),
+                    StatusChipState(label = "SYNCING", detail = "LOCAL_ONLY", tone = StatusTone.INFO),
+                    StatusChipState(
+                        label = "CONFLICT",
+                        detail = if (offlineAuthState == "AUTH_LOCKED") "LOCKED" else "NONE",
+                        tone = StatusTone.CONFLICT,
+                    ),
+                    StatusChipState(
+                        label = "VERIFIED",
+                        detail = if (sessionStatus == "SESSION_AVAILABLE") "SESSION" else "PENDING",
+                        tone = StatusTone.VERIFIED,
+                    ),
+                ),
+            )
+
+            OfflineFallbackPanel(
+                title = "Offline login guidance",
+                guidance = "Provision once, then login with local OTP even when network is unavailable.",
+            )
 
             OutlinedTextField(
                 value = identifierInput,
@@ -141,6 +174,10 @@ internal fun LoginScreen(
                         sessionStatus = "KEYSTORE_OR_STORAGE_ERROR"
                     }
                 },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = uiMetrics.controlMinHeight)
+                    .semantics { contentDescription = "Provision offline identity" },
             ) {
                 Text("Provision Identity (Offline Ready)")
             }
@@ -159,6 +196,10 @@ internal fun LoginScreen(
                     }
                 },
                 enabled = cachedIdentityUserId.isNotEmpty(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = uiMetrics.controlMinHeight)
+                    .semantics { contentDescription = "Generate new local OTP" },
             ) {
                 Text("Regenerate Local OTP")
             }
@@ -171,6 +212,10 @@ internal fun LoginScreen(
                     }
                 },
                 enabled = otpPreview.length == 6,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = uiMetrics.controlMinHeight)
+                    .semantics { contentDescription = "Use OTP preview value" },
             ) {
                 Text("Use OTP Preview")
             }
@@ -196,6 +241,10 @@ internal fun LoginScreen(
                     }
                 },
                 enabled = cachedIdentityUserId.isNotEmpty() && (otpInput.length == 6 || otpPreview.length == 6),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = uiMetrics.controlMinHeight)
+                    .semantics { contentDescription = "Login using offline OTP" },
             ) {
                 Text("Login Offline")
             }
@@ -211,6 +260,10 @@ internal fun LoginScreen(
                     }
                 },
                 enabled = authManager.restoreActiveSession() != null,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = uiMetrics.controlMinHeight)
+                    .semantics { contentDescription = "Continue with cached session" },
             ) {
                 Text("Continue Cached Session")
             }
