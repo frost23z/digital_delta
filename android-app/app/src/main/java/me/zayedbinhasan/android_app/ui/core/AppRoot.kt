@@ -4,14 +4,16 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Directions
@@ -59,6 +61,7 @@ import me.zayedbinhasan.android_app.auth.OfflineAuthManager
 import me.zayedbinhasan.android_app.auth.OfflineAuthSession
 import me.zayedbinhasan.android_app.data.local.db.LocalDatabaseFactory
 import me.zayedbinhasan.android_app.data.local.repository.LocalRepository
+import me.zayedbinhasan.android_app.ui.core.StatusTone
 import me.zayedbinhasan.android_app.ui.screens.ConflictScreen
 import me.zayedbinhasan.android_app.ui.screens.DashboardScreen
 import me.zayedbinhasan.android_app.ui.screens.DeliveriesScreen
@@ -190,67 +193,70 @@ private fun AuthenticatedShell(
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
-            TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
-                ),
-                title = {
-                    Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                        Text(
-                            text = currentTitle,
-                            fontWeight = FontWeight.ExtraBold,
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        Text(
-                            text = if (isOnline) {
-                                "Digital Delta Operations · Online"
-                            } else {
-                                "Digital Delta Operations · Offline"
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                TopAppBar(
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+                    ),
+                    title = {
+                        Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                            Text(
+                                text = currentTitle,
+                                fontWeight = FontWeight.ExtraBold,
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                            Text(
+                                text = "Digital Delta Operations",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
+                            )
+                        }
+                    },
+                    actions = {
+                        FilledTonalIconButton(
+                            onClick = {
+                                navController.navigate(AppRoutes.CONFLICTS) {
+                                    launchSingleTop = true
+                                }
                             },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (isOnline) {
-                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
-                            } else {
-                                MaterialTheme.colorScheme.error
+                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.15f),
+                            ),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.ReportProblem,
+                                contentDescription = "Open conflicts",
+                                tint = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                        FilledTonalIconButton(
+                            onClick = {
+                                navController.navigate(AppRoutes.PROFILE) {
+                                    launchSingleTop = true
+                                }
                             },
-                        )
-                    }
-                },
-                actions = {
-                    FilledTonalIconButton(
-                        onClick = {
-                            navController.navigate(AppRoutes.CONFLICTS) {
-                                launchSingleTop = true
-                            }
-                        },
-                        colors = IconButtonDefaults.filledTonalIconButtonColors(
-                            containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.15f),
-                        ),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.ReportProblem,
-                            contentDescription = "Open conflicts",
-                            tint = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                    FilledTonalIconButton(
-                        onClick = {
-                            navController.navigate(AppRoutes.PROFILE) {
-                                launchSingleTop = true
-                            }
-                        },
-                        colors = IconButtonDefaults.filledTonalIconButtonColors(
-                            containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
-                            contentColor = MaterialTheme.colorScheme.primary,
-                        ),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.AccountCircle,
-                            contentDescription = "Open profile",
-                        )
-                    }
-                },
-            )
+                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                                contentColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.AccountCircle,
+                                contentDescription = "Open profile",
+                            )
+                        }
+                    },
+                )
+                TopModeBannerStrip(
+                    isOnline = isOnline,
+                    pendingMutationCount = pendingMutationsRaw.size,
+                    openConflictCount = openConflictCount,
+                    verifiedReceiptCount = receiptsRaw.count { it.verified },
+                )
+            }
         },
         bottomBar = {
             BottomNavigationBar(
@@ -267,28 +273,6 @@ private fun AuthenticatedShell(
                 .padding(horizontal = uiMetrics.horizontalPadding),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (currentRoute != AppRoutes.DASHBOARD && (
-                    !isOnline ||
-                        pendingMutationsRaw.isNotEmpty() ||
-                        openConflictCount > 0L
-                    )) {
-                RouteStateSnapshotRail(
-                    isOnline = isOnline,
-                    pendingMutationCount = pendingMutationsRaw.size,
-                    openConflictCount = openConflictCount,
-                    verifiedReceiptCount = receiptsRaw.count { it.verified },
-                )
-            }
-            if (currentRoute == AppRoutes.DASHBOARD) {
-                SessionStatusHeader(
-                    role = session.role,
-                    authMode = session.authMode,
-                    isOnline = isOnline,
-                    openConflictCount = openConflictCount,
-                    pendingMutationCount = pendingMutationsRaw.size,
-                    verifiedReceiptCount = receiptsRaw.count { it.verified },
-                )
-            }
             AppNavHost(
                 repository = repository,
                 authManager = authManager,
@@ -366,146 +350,61 @@ private fun navigateToPrimaryRoute(
 }
 
 @Composable
-private fun SessionStatusHeader(
-    role: String,
-    authMode: String,
+private fun TopModeBannerStrip(
     isOnline: Boolean,
-    openConflictCount: Long,
     pendingMutationCount: Int,
+    openConflictCount: Long,
     verifiedReceiptCount: Int,
 ) {
-    val uiMetrics = rememberUiMetrics()
-    val incident = when {
-        !isOnline -> Triple(
-            "Offline Mode Active",
-            "All actions are stored locally; sync is paused until validated network returns.",
-            MaterialTheme.colorScheme.error,
-        )
-        openConflictCount > 0L -> Triple(
-            "Conflict Triage Required",
-            "$openConflictCount conflict(s) need operator decision before full convergence.",
-            MaterialTheme.colorScheme.tertiary,
-        )
-        pendingMutationCount > 0 -> Triple(
-            "Sync Queue In Progress",
-            "$pendingMutationCount local mutation(s) are waiting to replicate.",
-            MaterialTheme.colorScheme.primary,
-        )
-        verifiedReceiptCount > 0 -> Triple(
-            "Verified Evidence Available",
-            "$verifiedReceiptCount signed PoD receipt(s) are locally verifiable.",
-            MaterialTheme.colorScheme.primary,
-        )
-        else -> Triple(
-            "System Ready",
-            "No active conflict or sync backlog detected.",
-            MaterialTheme.colorScheme.primary,
-        )
+    val activeStates = buildList {
+        if (!isOnline) {
+            add(Triple("OFFLINE MODE", "Local-only operations", StatusTone.CONFLICT))
+        }
+        if (pendingMutationCount > 0) {
+            add(Triple("SYNC QUEUED", "$pendingMutationCount pending changes", StatusTone.SYNC))
+        }
+        if (openConflictCount > 0L) {
+            add(Triple("CONFLICT OPEN", "$openConflictCount unresolved", StatusTone.CONFLICT))
+        }
+        if (verifiedReceiptCount > 0) {
+            add(Triple("VERIFIED", "PoD $verifiedReceiptCount", StatusTone.VERIFIED))
+        }
     }
 
-    Card(
+    if (activeStates.isEmpty()) {
+        return
+    }
+
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 4.dp),
+            .padding(horizontal = 12.dp)
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(uiMetrics.sectionSpacing),
-        ) {
-            Text("Role: ${role.replace('_', ' ')}", fontWeight = FontWeight.Bold)
-            Text("Auth: ${authMode.replace('_', ' ')}")
-            Text("Open conflicts: $openConflictCount")
+        activeStates.forEach { state ->
+            val toneColor = when (state.third) {
+                StatusTone.OFFLINE -> MaterialTheme.colorScheme.tertiary
+                StatusTone.SYNC -> MaterialTheme.colorScheme.primary
+                StatusTone.CONFLICT -> MaterialTheme.colorScheme.error
+                StatusTone.VERIFIED -> MaterialTheme.colorScheme.primary
+                StatusTone.INFO -> MaterialTheme.colorScheme.primary
+            }
             Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = incident.third.copy(alpha = 0.12f),
-                ),
+                colors = CardDefaults.cardColors(containerColor = toneColor.copy(alpha = 0.14f)),
             ) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                    verticalArrangement = Arrangement.spacedBy(1.dp),
                 ) {
+                    Text(state.first, color = toneColor, fontWeight = FontWeight.Bold)
                     Text(
-                        text = "Operational Priority: ${incident.first}",
-                        color = incident.third,
-                        fontWeight = FontWeight.ExtraBold,
-                    )
-                    Text(
-                        text = incident.second,
-                        style = MaterialTheme.typography.bodySmall,
+                        state.second,
+                        style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f),
                     )
                 }
             }
-            OperationalStatusStrip(
-                items = listOf(
-                    StatusChipState(label = "OFFLINE", detail = if (isOnline) "ONLINE" else "OFFLINE", tone = StatusTone.OFFLINE),
-                    StatusChipState(
-                        label = "SYNCING",
-                        detail = if (!isOnline) "WAIT_NET" else if (pendingMutationCount > 0) "QUEUED:$pendingMutationCount" else "IDLE",
-                        tone = StatusTone.SYNC,
-                    ),
-                    StatusChipState(
-                        label = "CONFLICT",
-                        detail = if (openConflictCount > 0L) "OPEN:$openConflictCount" else "NONE",
-                        tone = StatusTone.CONFLICT,
-                    ),
-                    StatusChipState(
-                        label = "VERIFIED",
-                        detail = if (verifiedReceiptCount > 0) "POD:$verifiedReceiptCount" else "NONE",
-                        tone = StatusTone.VERIFIED,
-                    ),
-                ),
-            )
-        }
-    }
-}
-
-@Composable
-private fun RouteStateSnapshotRail(
-    isOnline: Boolean,
-    pendingMutationCount: Int,
-    openConflictCount: Long,
-    verifiedReceiptCount: Int,
-) {
-    val title = when {
-        !isOnline -> "Offline mode active"
-        openConflictCount > 0L -> "Conflict attention needed"
-        pendingMutationCount > 0 -> "Sync queue pending"
-        else -> "System active"
-    }
-    val detail = "Net ${if (isOnline) "ONLINE" else "OFFLINE"} · Sync ${if (!isOnline) "WAIT_NET" else if (pendingMutationCount > 0) "QUEUED:$pendingMutationCount" else "IDLE"} · Conflict ${if (openConflictCount > 0L) "OPEN:$openConflictCount" else "NONE"} · Verified ${if (verifiedReceiptCount > 0) "POD:$verifiedReceiptCount" else "NONE"}"
-    val toneColor = when {
-        !isOnline -> MaterialTheme.colorScheme.error
-        openConflictCount > 0L -> MaterialTheme.colorScheme.tertiary
-        pendingMutationCount > 0 -> MaterialTheme.colorScheme.primary
-        else -> MaterialTheme.colorScheme.primary
-    }
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 4.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = toneColor.copy(alpha = 0.12f),
-        ),
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Text(
-                text = title,
-                color = toneColor,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                text = detail,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
-            )
         }
     }
 }
