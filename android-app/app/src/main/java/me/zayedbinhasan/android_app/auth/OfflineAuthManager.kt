@@ -267,9 +267,24 @@ class OfflineAuthManager(
         return DeviceKeyStore.signPayloadHash(alias, payloadHash)
     }
 
+    fun ensureUserPublicKey(userId: String): String? {
+        val alias = keyAliasForUser(userId)
+        return DeviceKeyStore.ensureKeyAndGetPublicKey(alias)
+    }
+
     fun verifyPayloadHashSignature(publicKeyBase64: String, payloadHash: String, signatureBase64: String): Boolean {
         return DeviceKeyStore.verifyPayloadHashSignature(
             publicKeyBase64 = publicKeyBase64,
+            payloadHash = payloadHash,
+            signatureBase64 = signatureBase64,
+        )
+    }
+
+    fun verifyPayloadHashSignatureForUser(userId: String, payloadHash: String, signatureBase64: String): Boolean {
+        val alias = keyAliasForUser(userId)
+        DeviceKeyStore.ensureKeyAndGetPublicKey(alias) ?: return false
+        return DeviceKeyStore.verifyPayloadHashSignatureByAlias(
+            alias = alias,
             payloadHash = payloadHash,
             signatureBase64 = signatureBase64,
         )
@@ -482,6 +497,20 @@ private object DeviceKeyStore {
 
             val verifier = Signature.getInstance("SHA256withRSA")
             verifier.initVerify(publicKey)
+            verifier.update(payloadHash.toByteArray(StandardCharsets.UTF_8))
+            verifier.verify(signatureBytes)
+        }.getOrDefault(false)
+    }
+
+    fun verifyPayloadHashSignatureByAlias(alias: String, payloadHash: String, signatureBase64: String): Boolean {
+        return runCatching {
+            val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER)
+            keyStore.load(null)
+            val certificate = keyStore.getCertificate(alias) ?: return false
+            val signatureBytes = Base64.decode(signatureBase64, Base64.NO_WRAP)
+
+            val verifier = Signature.getInstance("SHA256withRSA")
+            verifier.initVerify(certificate)
             verifier.update(payloadHash.toByteArray(StandardCharsets.UTF_8))
             verifier.verify(signatureBytes)
         }.getOrDefault(false)

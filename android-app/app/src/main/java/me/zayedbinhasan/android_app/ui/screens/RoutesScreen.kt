@@ -78,6 +78,7 @@ internal fun RoutesScreen(
     var routeEngineMessage by rememberSaveable { mutableStateOf("Idle") }
     var triageSummary by rememberSaveable { mutableStateOf("No triage actions yet") }
     var lastRecomputedAt by rememberSaveable { mutableStateOf<Long?>(null) }
+    var lastRecomputeLatencyMs by rememberSaveable { mutableStateOf<Long?>(null) }
     var autoPollEnabled by rememberSaveable { mutableStateOf(false) }
 
     val canManageRoutes = canManageRouteActions(activeRole)
@@ -101,15 +102,19 @@ internal fun RoutesScreen(
         blockedRouteCount: Int,
         preemptedLowPriorityCount: Int,
         reroutedHighPriorityCount: Int,
+        triageEvaluatedDeliveryCount: Int,
+        triageFallbackRouteCount: Int,
         recomputedAt: Long,
+        recomputeLatencyMs: Long,
     ) {
         lastRecomputedAt = recomputedAt
+        lastRecomputeLatencyMs = recomputeLatencyMs
         routeEngineMessage = if (success) {
-            "$reasonCode | changed=$changedRouteCount blocked=$blockedRouteCount"
+            "$reasonCode | changed=$changedRouteCount blocked=$blockedRouteCount latency=${recomputeLatencyMs}ms"
         } else {
             "$reasonCode | $detail"
         }
-        triageSummary = "P2/P3 dropped: $preemptedLowPriorityCount, P0/P1 rerouted: $reroutedHighPriorityCount"
+        triageSummary = "P2/P3 dropped: $preemptedLowPriorityCount, P0/P1 rerouted: $reroutedHighPriorityCount, scoped deliveries: $triageEvaluatedDeliveryCount, fallback routes: $triageFallbackRouteCount"
     }
 
     LaunchedEffect(autoPollEnabled, chaosBaseUrl, canManageRoutes) {
@@ -129,7 +134,10 @@ internal fun RoutesScreen(
                 blockedRouteCount = summary.blockedRouteCount,
                 preemptedLowPriorityCount = summary.preemptedLowPriorityCount,
                 reroutedHighPriorityCount = summary.reroutedHighPriorityCount,
+                triageEvaluatedDeliveryCount = summary.triageEvaluatedDeliveryCount,
+                triageFallbackRouteCount = summary.triageFallbackRouteCount,
                 recomputedAt = summary.recomputedAt,
+                recomputeLatencyMs = summary.recomputeLatencyMs,
             )
             delay(2_000)
         }
@@ -192,6 +200,7 @@ internal fun RoutesScreen(
                     Text("Route Engine: $routeEngineMessage")
                     Text("Triage: $triageSummary")
                     Text("Last recompute: ${lastRecomputedAt ?: "Never"}")
+                    Text("Last recompute latency: ${lastRecomputeLatencyMs?.let { "${it} ms" } ?: "N/A"}")
 
                     onGoDashboard?.let { navigateToDashboard ->
                         Button(
@@ -294,7 +303,10 @@ internal fun RoutesScreen(
                                     blockedRouteCount = summary.blockedRouteCount,
                                     preemptedLowPriorityCount = summary.preemptedLowPriorityCount,
                                     reroutedHighPriorityCount = summary.reroutedHighPriorityCount,
+                                    triageEvaluatedDeliveryCount = summary.triageEvaluatedDeliveryCount,
+                                    triageFallbackRouteCount = summary.triageFallbackRouteCount,
                                     recomputedAt = summary.recomputedAt,
+                                    recomputeLatencyMs = summary.recomputeLatencyMs,
                                 )
                                 routeEngineBusy = false
                             }
